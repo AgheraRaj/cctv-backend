@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Enums
+
+enum Role {
+  ADMIN
+  VIEWER
+}
+
+enum NVRType {
+  HIKVISION
+  HIFOCUS
+}
+
+// Models
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // bcrypt hashed — never stored plain
+  role      Role     @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Station {
+  id        String   @id @default(cuid())
+  name      String                      // "Mumbai Central"
+  city      String
+  state     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  nvrs      NVR[]
+}
+
+model NVR {
+  id           String   @id @default(cuid())
+  stationId    String
+  station      Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  type         NVRType                  // HIKVISION | HIFOCUS
+  name         String                   // "Block A - NVR 1"
+  ip           String                   // "192.168.1.10"
+  rtspPort     Int      @default(554)
+  httpPort     Int      @default(80)
+  username     String   @default("admin")
+  password     String                   // AES-256 encrypted before storing
+  totalChannel Int      @default(32)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  cameras      Camera[]
+}
+
+model Camera {
+  id       String  @id @default(cuid())
+  nvrId    String
+  nvr      NVR     @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+
+  channel  Int                          // 1–32
+  name     String                       // "Cafeteria — front view"
+  areaTag  String?                      // "cafeteria" — optional tag for filtering
+  isActive Boolean @default(true)       // false = no camera physically on this channel
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([nvrId, channel])            // one camera per channel per NVR
+}
