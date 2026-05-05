@@ -7,12 +7,11 @@ interface NVRData {
 }
 
 export const generateRTSP = (nvr: NVRData, channel: number): string => {
-  const pad = channel.toString().padStart(2, '0')
+  const pad = channel.toString()
 
   switch (nvr.type) {
     case 'HIKVISION':
       // Hikvision format: /Streaming/Channels/{channel}01
-      // channel 1 = 0101, channel 2 = 0201
       return `rtsp://${nvr.username}:${nvr.password}@${nvr.ip}:${nvr.rtspPort}/Streaming/Channels/${pad}01`
 
     case 'HIFOCUS':

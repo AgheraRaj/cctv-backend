@@ -3,7 +3,6 @@ import jwt, { SignOptions } from 'jsonwebtoken'
 import prisma from '../../config/db.js'
 import { env } from '../../config/env.js'
 import { AppError } from '../../middleware/errorHandler.js'
-import { PrismaPg } from '@prisma/adapter-pg'
 
 export const loginService = async (email: string, password: string) => {
   const user = await prisma.user.findUnique({ where: { email } })
