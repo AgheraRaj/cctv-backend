@@ -1,16 +1,16 @@
-import prisma from '../../config/db.js'
-import { AppError } from '../../middleware/errorHandler.js'
-import { encrypt } from '../../utils/crypto.js'
-import { NVRType } from '@prisma/client'
+import prisma from "../../config/db.js";
+import { AppError } from "../../middleware/errorHandler.js";
+import { encrypt } from "../../utils/crypto.js";
+import { NVRType } from "@prisma/client";
 
 export const getNVRsByStation = async (stationId: string) => {
   // Verify station exists first
-  const station = await prisma.station.findUnique({ where: { id: stationId } })
-  if (!station) throw new AppError(404, 'Station not found.')
+  const station = await prisma.station.findUnique({ where: { id: stationId } });
+  if (!station) throw new AppError(404, "Station not found.");
 
   return prisma.nVR.findMany({
     where: { stationId },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       name: true,
@@ -21,13 +21,15 @@ export const getNVRsByStation = async (stationId: string) => {
       username: true,
       totalChannel: true,
       stationId: true,
+      status: true, // ← add
+      lastSeenAt: true, // ← add
+      offlineSince: true, // ← add
       createdAt: true,
       updatedAt: true,
-      // password intentionally excluded — never returned in API
       _count: { select: { cameras: true } },
     },
-  })
-}
+  });
+};
 
 export const getNVRById = async (id: string) => {
   const nvr = await prisma.nVR.findUnique({
@@ -42,34 +44,37 @@ export const getNVRById = async (id: string) => {
       username: true,
       totalChannel: true,
       stationId: true,
+      status: true, // ← add
+      lastSeenAt: true, // ← add
+      offlineSince: true, // ← add
       createdAt: true,
       updatedAt: true,
       _count: { select: { cameras: true } },
     },
-  })
+  });
 
-  if (!nvr) throw new AppError(404, 'NVR not found.')
-  return nvr
-}
+  if (!nvr) throw new AppError(404, "NVR not found.");
+  return nvr;
+};
 
 export const createNVR = async (
   stationId: string,
   data: {
-    name: string
-    ip: string
-    type: NVRType
-    rtspPort?: number
-    httpPort?: number
-    username?: string
-    password: string
-    totalChannel?: number
-  }
+    name: string;
+    ip: string;
+    type: NVRType;
+    rtspPort?: number;
+    httpPort?: number;
+    username?: string;
+    password: string;
+    totalChannel?: number;
+  },
 ) => {
-  const station = await prisma.station.findUnique({ where: { id: stationId } })
-  if (!station) throw new AppError(404, 'Station not found.')
+  const station = await prisma.station.findUnique({ where: { id: stationId } });
+  if (!station) throw new AppError(404, "Station not found.");
 
   // Encrypt password before storing
-  const encryptedPassword = encrypt(data.password)
+  const encryptedPassword = encrypt(data.password);
 
   return prisma.nVR.create({
     data: {
@@ -90,28 +95,28 @@ export const createNVR = async (
       createdAt: true,
       updatedAt: true,
     },
-  })
-}
+  });
+};
 
 export const updateNVR = async (
   id: string,
   data: Partial<{
-    name: string
-    ip: string
-    type: NVRType
-    rtspPort: number
-    httpPort: number
-    username: string
-    password: string
-    totalChannel: number
-  }>
+    name: string;
+    ip: string;
+    type: NVRType;
+    rtspPort: number;
+    httpPort: number;
+    username: string;
+    password: string;
+    totalChannel: number;
+  }>,
 ) => {
-  const existing = await prisma.nVR.findUnique({ where: { id } })
-  if (!existing) throw new AppError(404, 'NVR not found.')
+  const existing = await prisma.nVR.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "NVR not found.");
 
   // Only encrypt if password is being updated
   if (data.password) {
-    data.password = encrypt(data.password)
+    data.password = encrypt(data.password);
   }
 
   return prisma.nVR.update({
@@ -130,13 +135,13 @@ export const updateNVR = async (
       createdAt: true,
       updatedAt: true,
     },
-  })
-}
+  });
+};
 
 export const deleteNVR = async (id: string) => {
-  const existing = await prisma.nVR.findUnique({ where: { id } })
-  if (!existing) throw new AppError(404, 'NVR not found.')
+  const existing = await prisma.nVR.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "NVR not found.");
 
   // Cascades to cameras automatically
-  return prisma.nVR.delete({ where: { id } })
-}
+  return prisma.nVR.delete({ where: { id } });
+};

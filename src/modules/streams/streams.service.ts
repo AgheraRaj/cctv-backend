@@ -47,24 +47,21 @@ const resolveStream = async (
 ): Promise<StreamResult> => {
   const cacheKey = `stream:${nvrId}:${channel}`
 
-  // 1. Check Redis cache first
   const cached = await getCache<string>(cacheKey)
   if (cached) {
+    console.log(`Cache hit for ${cacheKey}`)
     return { nvrId, channel, whepUrl: cached }
   }
 
-  // 2. Fetch NVR from DB
   const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } })
   if (!nvr) throw new AppError(404, `NVR ${nvrId} not found.`)
 
-  // 3. Verify camera exists and is active on this channel
   const camera = await prisma.camera.findUnique({
     where: { nvrId_channel: { nvrId, channel } },
   })
   if (!camera) throw new AppError(404, `No camera on channel ${channel}.`)
   if (!camera.isActive) throw new AppError(400, `Camera on channel ${channel} is inactive.`)
 
-  // 4. Decrypt NVR password and generate RTSP URL
   const decryptedPassword = decrypt(nvr.password)
   const rtspUrl = generateRTSP(
     {
@@ -77,14 +74,12 @@ const resolveStream = async (
     channel
   )
 
-  // 5. Provision path in MediaMTX if not already there
   const pathName = `${nvrId}-ch${channel}`
   const existing = await getPath(pathName)
   if (!existing) {
     await provisionPath(pathName, rtspUrl)
   }
 
-  // 6. Build WHEP URL and cache it for 5 minutes
   const whepUrl = `${env.MEDIAMTX_WEBRTC_URL}/${pathName}/whep`
   await setCache(cacheKey, whepUrl, 300)
 

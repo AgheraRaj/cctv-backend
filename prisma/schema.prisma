@@ -18,6 +18,11 @@ enum NVRType {
   HIFOCUS
 }
 
+enum NVRStatus {
+  ONLINE
+  OFFLINE
+}
+
 // Models
 
 model User {
@@ -54,6 +59,10 @@ model NVR {
   password     String                   // AES-256 encrypted before storing
   totalChannel Int      @default(32)
 
+  status       NVRStatus @default(OFFLINE)
+  lastSeenAt   DateTime?
+  offlineSince DateTime?
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -69,6 +78,11 @@ model Camera {
   name     String                       // "Cafeteria — front view"
   areaTag  String?                      // "cafeteria" — optional tag for filtering
   isActive Boolean @default(true)       // false = no camera physically on this channel
+
+  isOnline     Boolean   @default(false)
+  lastSeenAt   DateTime?
+  offlineSince DateTime?
+  protocol     String?                  // populated for Hikvision only
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
