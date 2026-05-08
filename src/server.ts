@@ -1,3 +1,4 @@
+import http from 'http'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
@@ -6,6 +7,7 @@ import { env } from './config/env.js'
 import redis from './config/redis.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import logger from './utils/logger.js'
+import { initSocketService } from './services/socketService.js'
 
 // ─── Route Imports ─────────────────────────────────────────────────
 import authRoutes from './modules/auth/auth.routes.js'
@@ -69,8 +71,13 @@ app.use(errorHandler)
 // ─── Start Server ──────────────────────────────────────────────────
 const start = async () => {
   await redis.connect()
+
+  const httpServer = http.createServer(app)
+  initSocketService(httpServer)
+
   startDetectionWorker()
-  app.listen(env.PORT, () => {
+
+  httpServer.listen(env.PORT, () => {
     console.log(`✅ Server running on port ${env.PORT} in ${env.NODE_ENV} mode`)
   })
 }

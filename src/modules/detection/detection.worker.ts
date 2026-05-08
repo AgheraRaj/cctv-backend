@@ -1,58 +1,77 @@
-import redis from '../../config/redis.js'
+import { Worker, Job } from 'bullmq'
+import { connection, detectionQueue } from '../../config/bullmq.js'
 import { runDetectionForNVR } from './detection.service.js'
 import logger from '../../utils/logger.js'
 
-const ACTIVE_NVR_KEY = 'detection:active:nvr'
-const INTERVAL_MS = 30_000  // 30 seconds
+let worker: Worker | null = null
 
-let workerInterval: NodeJS.Timeout | null = null
+const POLL_INTERVAL = 30_000 // 30 seconds
 
 // ─── Start / Stop Worker ─────────────────────────────────
 
 export const startDetectionWorker = (): void => {
-  if (workerInterval) return  // already running
+  if (worker) return // already running
 
-  logger.info('Detection worker started')
+  logger.info('Detection BullMQ Worker started (High-Scale mode)')
 
-  workerInterval = setInterval(async () => {
-    await runDetectionCycle()
-  }, INTERVAL_MS)
+  worker = new Worker(
+    'detection-queue',
+    async (job: Job) => {
+      const { nvrId } = job.data
+      await runDetectionForNVR(nvrId)
+    },
+    {
+      connection,
+      concurrency: 50, // Industry standard: handle multiple jobs in parallel
+    }
+  )
+
+  worker.on('failed', (job, err) => {
+    logger.error(`[Job ${job?.id}] Detection failed for NVR ${job?.data?.nvrId}: ${err.message}`)
+  })
 }
 
-export const stopDetectionWorker = (): void => {
-  if (!workerInterval) return
-
-  clearInterval(workerInterval)
-  workerInterval = null
-  logger.info('Detection worker stopped')
+export const stopDetectionWorker = async (): Promise<void> => {
+  if (!worker) return
+  await worker.close()
+  worker = null
+  logger.info('Detection BullMQ Worker stopped')
 }
 
-// ─── One Detection Cycle ─────────────────────────────────
+// ─── Queue Management Helpers ─────────────────────────────
 
-const runDetectionCycle = async (): Promise<void> => {
-  try {
-    const nvrId = await redis.get(ACTIVE_NVR_KEY)
+/** Add an NVR to the repeatable detection queue */
+export const addActiveNVR = async (nvrId: string): Promise<void> => {
+  // jobId: nvrId ensures we don't add the same NVR twice
+  await detectionQueue.add(
+    'poll-nvr',
+    { nvrId },
+    {
+      repeat: { every: POLL_INTERVAL },
+      jobId: nvrId, 
+    }
+  )
+}
 
-    if (!nvrId) return  // no NVR selected — skip this cycle
-
-    logger.info(`Running detection for NVR ${nvrId}`)
-    await runDetectionForNVR(nvrId)
-  } catch (err) {
-    // Worker must never crash — log and continue
-    logger.error(`Detection cycle failed: ${String(err)}`)
+/** Remove an NVR from the repeatable detection queue */
+export const removeActiveNVR = async (nvrId: string): Promise<void> => {
+  const jobs = await detectionQueue.getRepeatableJobs()
+  const job = jobs.find((j) => j.id === nvrId)
+  
+  if (job) {
+    await detectionQueue.removeRepeatableByKey(job.key)
   }
 }
 
-// ─── Redis Helpers — used by controller ──────────────────
-
-export const setActiveNVR = async (nvrId: string): Promise<void> => {
-  await redis.set(ACTIVE_NVR_KEY, nvrId)
+/** Check if an NVR is currently in the repeatable queue */
+export const isNVRActive = async (nvrId: string): Promise<boolean> => {
+  const jobs = await detectionQueue.getRepeatableJobs()
+  return jobs.some((j) => j.id === nvrId)
 }
 
-export const clearActiveNVR = async (): Promise<void> => {
-  await redis.del(ACTIVE_NVR_KEY)
-}
-
-export const getActiveNVR = async (): Promise<string | null> => {
-  return redis.get(ACTIVE_NVR_KEY)
+/** Return all NVR IDs currently being polled */
+export const getAllActiveNVRs = async (): Promise<string[]> => {
+  const jobs = await detectionQueue.getRepeatableJobs()
+  // By default, BullMQ stores the ID in the jobs list
+  return jobs.map((j) => j.id).filter((id): id is string => !!id)
 }

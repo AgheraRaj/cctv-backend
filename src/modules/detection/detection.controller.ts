@@ -1,9 +1,16 @@
 import { Response, NextFunction } from 'express'
 import { AuthRequest } from '../../middleware/auth.js'
 import { AppError } from '../../middleware/errorHandler.js'
-import { setActiveNVR, clearActiveNVR, getActiveNVR } from './detection.worker.js'
+import {
+  addActiveNVR,
+  removeActiveNVR,
+  isNVRActive,
+  getAllActiveNVRs,
+} from './detection.worker.js'
 import { runDetectionForNVR } from './detection.service.js'
 import prisma from '../../config/db.js'
+
+// ─── Start Detection ──────────────────────────────────────
 
 export const startDetection = async (
   req: AuthRequest,
@@ -17,17 +24,8 @@ export const startDetection = async (
     const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } })
     if (!nvr) throw new AppError(404, 'NVR not found.')
 
-    // Check if another NVR is already being detected
-    const currentActiveNVR = await getActiveNVR()
-    if (currentActiveNVR && currentActiveNVR !== nvrId) {
-      throw new AppError(
-        409,
-        `Detection already running for another NVR. Stop it first.`
-      )
-    }
-
-    // Set this NVR as active
-    await setActiveNVR(nvrId)
+    // Add to active set (idempotent — safe to call again if already active)
+    await addActiveNVR(nvrId)
 
     // Run first detection immediately — don't wait 30s for first result
     await runDetectionForNVR(nvrId)
@@ -41,6 +39,8 @@ export const startDetection = async (
   }
 }
 
+// ─── Stop Detection ───────────────────────────────────────
+
 export const stopDetection = async (
   req: AuthRequest,
   res: Response,
@@ -49,17 +49,12 @@ export const stopDetection = async (
   try {
     const nvrId = req.params.nvrId as string
 
-    const currentActiveNVR = await getActiveNVR()
-
-    if (!currentActiveNVR) {
-      throw new AppError(400, 'No detection is currently running.')
+    const active = await isNVRActive(nvrId)
+    if (!active) {
+      throw new AppError(400, 'Detection is not running for this NVR.')
     }
 
-    if (currentActiveNVR !== nvrId) {
-      throw new AppError(400, 'Detection is running for a different NVR.')
-    }
-
-    await clearActiveNVR()
+    await removeActiveNVR(nvrId)
 
     res.status(200).json({
       message: 'Detection stopped.',
@@ -70,6 +65,8 @@ export const stopDetection = async (
   }
 }
 
+// ─── Per-NVR Status ───────────────────────────────────────
+
 export const getDetectionStatus = async (
   req: AuthRequest,
   res: Response,
@@ -77,17 +74,18 @@ export const getDetectionStatus = async (
 ): Promise<void> => {
   try {
     const nvrId = req.params.nvrId as string
-    const activeNVR = await getActiveNVR()
+    const active = await isNVRActive(nvrId)
 
     res.status(200).json({
       nvrId,
-      isRunning: activeNVR === nvrId,
-      activeNvrId: activeNVR ?? null,
+      isRunning: active,
     })
   } catch (err) {
     next(err)
   }
 }
+
+// ─── All Active NVRs ──────────────────────────────────────
 
 export const getActiveDetection = async (
   _req: AuthRequest,
@@ -95,22 +93,22 @@ export const getActiveDetection = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const activeNVR = await getActiveNVR()
+    const nvrIds = await getAllActiveNVRs()
 
-    if (!activeNVR) {
-      res.status(200).json({ isRunning: false, activeNvrId: null })
+    if (!nvrIds.length) {
+      res.status(200).json({ isRunning: false, activeNvrIds: [] })
       return
     }
 
-    const nvr = await prisma.nVR.findUnique({
-      where: { id: activeNVR },
+    const nvrs = await prisma.nVR.findMany({
+      where: { id: { in: nvrIds } },
       select: { id: true, name: true, ip: true, status: true, lastSeenAt: true },
     })
 
     res.status(200).json({
       isRunning: true,
-      activeNvrId: activeNVR,
-      nvr,
+      activeNvrIds: nvrIds,
+      nvrs,
     })
   } catch (err) {
     next(err)

@@ -10,6 +10,8 @@ import {
   deleteNVR,
   getAllNVRs,
 } from './nvrs.service.js'
+import { addActiveNVR, removeActiveNVR } from '../detection/detection.worker.js'
+import { runDetectionForNVR } from '../detection/detection.service.js'
 
 const createNVRSchema = z.object({
   name: z.string().min(1, 'Name is required.'),
@@ -86,6 +88,10 @@ export const create = async (
 
     const nvr = await createNVR(parsed.data)
 
+    // Automatically start detection for the new NVR
+    await addActiveNVR(nvr.id)
+    await runDetectionForNVR(nvr.id)
+
     res.status(201).json(nvr)
   } catch (err) {
     next(err)
@@ -123,6 +129,9 @@ export const remove = async (
     const id = req.params.id as string
 
     await deleteNVR(id)
+    
+    // Stop detection if it was running
+    await removeActiveNVR(id)
 
     res.status(200).json({
       message: 'NVR deleted successfully.',

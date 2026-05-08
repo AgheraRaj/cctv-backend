@@ -4,6 +4,11 @@ import { discoverHikvisionCameras } from './hikvision.discoverer.js'
 import { discoverHifocusCameras } from './hifocus.discoverer.js'
 import type { DiscoveredCamera } from './hikvision.discoverer.js'
 import logger from '../../utils/logger.js'
+import {
+  emitNvrStatus,
+  emitCameraStatus,
+  emitCameraNew,
+} from '../../services/socketService.js'
 
 export const runDetectionForNVR = async (nvrId: string): Promise<void> => {
   // 1 — Fetch NVR from DB with credentials
@@ -44,8 +49,14 @@ export const runDetectionForNVR = async (nvrId: string): Promise<void> => {
     logger.warn(`NVR ${nvr.name} (${nvr.ip}) unreachable: ${String(err)}`)
   }
 
-  // 3 — Update NVR status
-  await updateNVRStatus(nvrId, nvrReachable, nvr.offlineSince)
+  // 3 — Update NVR status + emit Socket.io event
+  const updatedNvr = await updateNVRStatus(nvrId, nvrReachable, nvr.offlineSince)
+  emitNvrStatus({
+    nvrId,
+    status: updatedNvr.status as 'ONLINE' | 'OFFLINE',
+    lastSeenAt: updatedNvr.lastSeenAt,
+    offlineSince: updatedNvr.offlineSince,
+  })
 
   if (!nvrReachable) return
 
@@ -59,24 +70,26 @@ const updateNVRStatus = async (
   nvrId: string,
   isReachable: boolean,
   currentOfflineSince: Date | null
-): Promise<void> => {
+) => {
   if (isReachable) {
-    await prisma.nVR.update({
+    return prisma.nVR.update({
       where: { id: nvrId },
       data: {
         status: 'ONLINE',
         lastSeenAt: new Date(),
-        offlineSince: null,  // clear offline time when back online
+        offlineSince: null,
       },
+      select: { status: true, lastSeenAt: true, offlineSince: true },
     })
   } else {
-    await prisma.nVR.update({
+    return prisma.nVR.update({
       where: { id: nvrId },
       data: {
         status: 'OFFLINE',
         // Only set offlineSince once — preserve original time on subsequent polls
         offlineSince: currentOfflineSince ?? new Date(),
       },
+      select: { status: true, lastSeenAt: true, offlineSince: true },
     })
   }
 }
@@ -103,12 +116,12 @@ const reconcileCameras = async (
     const existing = existingMap.get(channel)
 
     if (!existing) {
-      // New camera — insert into DB
-      await prisma.camera.create({
+      // New camera — insert into DB and notify frontend
+      const newCamera = await prisma.camera.create({
         data: {
           nvrId,
           channel,
-          name: `Channel ${channel}`,  // default name — admin can rename later
+          name: `Channel ${channel}`,
           isActive: true,
           isOnline: discoveredCam.isOnline,
           lastSeenAt: discoveredCam.isOnline ? now : null,
@@ -118,6 +131,16 @@ const reconcileCameras = async (
       })
 
       logger.info(`New camera discovered on NVR ${nvrId} — channel ${channel}`)
+
+      emitCameraNew({
+        camera: {
+          id: newCamera.id,
+          nvrId,
+          channel,
+          name: newCamera.name,
+          isOnline: newCamera.isOnline,
+        },
+      })
       continue
     }
 
@@ -125,12 +148,11 @@ const reconcileCameras = async (
     const goingOffline = !discoveredCam.isOnline && existing.isOnline
     const comingOnline = discoveredCam.isOnline && !existing.isOnline
 
-    await prisma.camera.update({
+    const updatedCamera = await prisma.camera.update({
       where: { id: existing.id },
       data: {
         isOnline: discoveredCam.isOnline,
-        lastSeenAt: discoveredCam.isOnline ? now : existing.offlineSince ? undefined : undefined,
-        // Set offlineSince only when first going offline
+        lastSeenAt: discoveredCam.isOnline ? now : undefined,
         offlineSince: comingOnline
           ? null
           : goingOffline
@@ -138,7 +160,19 @@ const reconcileCameras = async (
           : existing.offlineSince,
         protocol: discoveredCam.protocol ?? undefined,
       },
+      select: { id: true, isOnline: true, offlineSince: true },
     })
+
+    // Only emit when status actually changed — avoids noisy frontend updates
+    if (goingOffline || comingOnline) {
+      emitCameraStatus({
+        cameraId: existing.id,
+        nvrId,
+        channel,
+        isOnline: updatedCamera.isOnline,
+        offlineSince: updatedCamera.offlineSince,
+      })
+    }
   }
 
   // Mark cameras not in discovery response as offline
@@ -153,6 +187,14 @@ const reconcileCameras = async (
       })
 
       logger.info(`Camera channel ${channel} on NVR ${nvrId} went offline`)
+
+      emitCameraStatus({
+        cameraId: existing.id,
+        nvrId,
+        channel,
+        isOnline: false,
+        offlineSince: existing.offlineSince ?? now,
+      })
     }
   }
 }

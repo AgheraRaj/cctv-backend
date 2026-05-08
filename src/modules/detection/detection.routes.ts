@@ -5,7 +5,6 @@ import {
   startDetection,
   stopDetection,
   getDetectionStatus,
-  getActiveDetection,
 } from './detection.controller.js'
 
 const router = Router({ mergeParams: true })
