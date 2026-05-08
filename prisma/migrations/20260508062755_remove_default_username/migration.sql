@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "NVR" ALTER COLUMN "username" DROP DEFAULT;

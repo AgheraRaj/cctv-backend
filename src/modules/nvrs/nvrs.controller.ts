@@ -8,6 +8,7 @@ import {
   createNVR,
   updateNVR,
   deleteNVR,
+  getAllNVRs,
 } from './nvrs.service.js'
 
 const createNVRSchema = z.object({
@@ -21,10 +22,24 @@ const createNVRSchema = z.object({
   httpPort: z.number().default(80),
   username: z.string().default('admin'),
   password: z.string().min(1, 'Password is required.'),
-  totalChannel: z.number().default(32),
+  stationName: z.string().min(1, 'Station name is required.'),
+  stationCity: z.string().min(1, 'Station city is required.'),
 })
 
 const updateNVRSchema = createNVRSchema.partial()
+
+export const getAll = async (
+  _req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const nvrs = await getAllNVRs()
+    res.status(200).json(nvrs)
+  } catch (err) {
+    next(err)
+  }
+}
 
 export const getByStation = async (
   req: AuthRequest,
@@ -33,7 +48,9 @@ export const getByStation = async (
 ): Promise<void> => {
   try {
     const stationId = req.params.stationId as string
+
     const nvrs = await getNVRsByStation(stationId)
+
     res.status(200).json(nvrs)
   } catch (err) {
     next(err)
@@ -48,6 +65,7 @@ export const getById = async (
   try {
     const id = req.params.id as string
     const nvr = await getNVRById(id)
+
     res.status(200).json(nvr)
   } catch (err) {
     next(err)
@@ -61,12 +79,13 @@ export const create = async (
 ): Promise<void> => {
   try {
     const parsed = createNVRSchema.safeParse(req.body)
+
     if (!parsed.success) {
       throw new AppError(400, parsed.error.issues[0].message)
     }
 
-    const stationId = req.params.stationId as string
-    const nvr = await createNVR(stationId, parsed.data)
+    const nvr = await createNVR(parsed.data)
+
     res.status(201).json(nvr)
   } catch (err) {
     next(err)
@@ -80,12 +99,15 @@ export const update = async (
 ): Promise<void> => {
   try {
     const parsed = updateNVRSchema.safeParse(req.body)
+
     if (!parsed.success) {
       throw new AppError(400, parsed.error.issues[0].message)
     }
 
     const id = req.params.id as string
+
     const nvr = await updateNVR(id, parsed.data)
+
     res.status(200).json(nvr)
   } catch (err) {
     next(err)
@@ -99,8 +121,12 @@ export const remove = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string
+
     await deleteNVR(id)
-    res.status(200).json({ message: 'NVR deleted successfully.' })
+
+    res.status(200).json({
+      message: 'NVR deleted successfully.',
+    })
   } catch (err) {
     next(err)
   }

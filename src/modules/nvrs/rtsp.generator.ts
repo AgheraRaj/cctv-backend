@@ -14,7 +14,7 @@ export const generateRTSP = (nvr: NVRData, channel: number): string => {
 
     case "HIFOCUS":
       // User confirmed this format works in VLC: /chID=1&streamType=main
-      return `rtsp://${nvr.username}:${nvr.password}@${nvr.ip}:${nvr.rtspPort}/chID=${channel}&streamType=sub`;
+      return `rtsp://${nvr.username}:${nvr.password}@${nvr.ip}:${nvr.rtspPort}/?chID=${channel}&streamType=sub`;
 
     default:
       throw new Error(`Unsupported NVR type: ${nvr.type}`);

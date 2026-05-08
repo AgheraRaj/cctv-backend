@@ -11,9 +11,9 @@ export const getCameraSlots = async (nvrId: string) => {
 
   const cameraMap = new Map(nvr.cameras.map((c) => [c.channel, c]));
 
-  // Always return exactly totalChannel slots (default 32)
+  // Always return exactly 16 slots
   // Gaps where no camera exists are filled with isActive: false
-  return Array.from({ length: nvr.totalChannel }, (_, i) => {
+  return Array.from({ length: 16 }, (_, i) => {
     const channel = i + 1;
     const camera = cameraMap.get(channel);
 
@@ -54,11 +54,10 @@ export const createCamera = async (
   const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } });
   if (!nvr) throw new AppError(404, "NVR not found.");
 
-  // Validate channel is within NVR's range
-  if (data.channel < 1 || data.channel > nvr.totalChannel) {
+  if (data.channel < 1 || data.channel > 16) {
     throw new AppError(
       400,
-      `Channel must be between 1 and ${nvr.totalChannel}.`,
+      `Channel must be between 1 and 16.`,
     );
   }
 

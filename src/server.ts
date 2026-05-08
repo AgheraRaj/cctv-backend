@@ -9,7 +9,6 @@ import logger from './utils/logger.js'
 
 // ─── Route Imports ─────────────────────────────────────────────────
 import authRoutes from './modules/auth/auth.routes.js'
-import stationRoutes from './modules/stations/stations.routes.js'
 import nvrRoutes from './modules/nvrs/nvrs.routes.js'
 import cameraRoutes from './modules/cameras/cameras.routes.js'
 import streamRoutes from './modules/streams/streams.routes.js'
@@ -58,8 +57,7 @@ app.get('/health', (_req, res) => {
 
 // ─── Routes ────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes)
-app.use('/api/stations', stationRoutes)
-app.use('/api/stations/:stationId/nvrs', nvrRoutes)
+app.use('/api/nvrs', nvrRoutes)
 app.use('/api/nvrs/:nvrId/cameras', cameraRoutes)
 app.use('/api/nvrs/:nvrId/detection', detectionRoutes)
 app.use('/api/streams', streamRoutes)
