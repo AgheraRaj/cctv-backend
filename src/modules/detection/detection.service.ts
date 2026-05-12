@@ -25,7 +25,7 @@ export const runDetectionForNVR = async (nvrId: string): Promise<void> => {
   const decryptedPassword = decrypt(nvr.password)
 
   // 2 — Poll NVR for connected cameras
-  let discovered: DiscoveredCamera[] = []
+  let discovered: DiscoveredCamera[] | null = []
   let nvrReachable = true
 
   try {
@@ -61,7 +61,9 @@ export const runDetectionForNVR = async (nvrId: string): Promise<void> => {
   if (!nvrReachable) return
 
   // 4 — Reconcile discovered cameras with DB
-  await reconcileCameras(nvrId, discovered, nvr.cameras)
+  if (discovered !== null) {
+    await reconcileCameras(nvrId, discovered, nvr.cameras)
+  }
 }
 
 // ─── NVR Status ──────────────────────────────────────────
