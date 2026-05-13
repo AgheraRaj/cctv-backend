@@ -86,5 +86,27 @@ model Camera {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  recordings Recording[]
+
   @@unique([nvrId, channel])            // one camera per channel per NVR
+}
+
+model Recording {
+  id        String   @id @default(cuid())
+  cameraId  String
+  camera    Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+
+  nvrId     String
+  channel   Int
+
+  filename  String          // "2026-05-12_10-00-00.mp4"
+  filePath  String          // full absolute path on disk
+  startTime DateTime        // parsed from filename
+  endTime   DateTime?       // null while recording is ongoing
+  sizeBytes BigInt @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([nvrId, channel])
+  @@index([startTime])
 }

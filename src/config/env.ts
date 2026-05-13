@@ -18,6 +18,11 @@ const envSchema = z.object({
 
   MEDIAMTX_API_URL: z.string().min(1, "MEDIAMTX_API_URL is required"),
   MEDIAMTX_WEBRTC_URL: z.string().min(1, "MEDIAMTX_WEBRTC_URL is required"),
+  
+  RECORDINGS_PATH: z.string().min(1, 'RECORDINGS_PATH is required'),
+  
+  RECORDING_TOKEN_SECRET: z.string().min(1, "RECORDING_TOKEN_SECRET is required"),
+  RECORDING_TOKEN_EXPIRES_IN: z.string().default("300"),
 });
 
 const parsed = envSchema.safeParse(process.env)

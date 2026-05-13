@@ -70,13 +70,7 @@ export const discoverHifocusCameras = async (
   username: string,
   password: string
 ): Promise<DiscoveredCamera[] | null> => {
-  let cam: Cam
-  try {
-    cam = await connectToNVR(ip, username, password, httpPort)
-  } catch (err) {
-    logger.warn(`ONVIF connection failed for Hi-Focus NVR ${ip}: ${String(err)}`)
-    return null
-  }
+  const cam = await connectToNVR(ip, username, password, httpPort)
 
   let profiles: OnvifProfile[] = []
   
