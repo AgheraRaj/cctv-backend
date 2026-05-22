@@ -84,18 +84,32 @@ const updateNVRStatus = async (
       select: { status: true, lastSeenAt: true, offlineSince: true },
     })
   } else {
-    return prisma.nVR.update({
-      where: { id: nvrId },
-      data: {
-        status: 'OFFLINE',
-        // Only set offlineSince once — preserve original time on subsequent polls
-        offlineSince: currentOfflineSince ?? new Date(),
-      },
-      select: { status: true, lastSeenAt: true, offlineSince: true },
-    })
+    const [updatedNvr] = await prisma.$transaction([
+      prisma.nVR.update({
+        where: { id: nvrId },
+        data: {
+          status: 'OFFLINE',
+          offlineSince: currentOfflineSince ?? new Date(),
+        },
+        select: { status: true, lastSeenAt: true, offlineSince: true },
+      }),
+      // When the NVR is unreachable, all its cameras are effectively offline too.
+      // Mark them all so the frontend never shows a camera as online under an offline NVR.
+      prisma.camera.updateMany({
+        where: {
+          nvrId,
+          isOnline: true, // only touch cameras that are currently marked online
+        },
+        data: {
+          isOnline: false,
+          offlineSince: new Date(),
+        },
+      }),
+    ])
+
+    return updatedNvr
   }
 }
-
 // ─── Camera Reconciliation ───────────────────────────────
 
 const reconcileCameras = async (

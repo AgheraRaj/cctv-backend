@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
 import { XMLParser } from 'fast-xml-parser'
 
 export interface DiscoveredCamera {
@@ -34,13 +34,29 @@ export const discoverHikvisionCameras = async (
 ): Promise<DiscoveredCamera[]> => {
   const url = `http://${ip}:${httpPort}/ISAPI/ContentMgmt/InputProxy/channels/status`
 
-  const response = await axios.get<string>(url, {
-    auth: { username, password },
-    responseType: 'text',
-    timeout: 10000,  // 10 second timeout — don't wait forever
-  })
+  let responseData: string
 
-  const parsed = parser.parse(response.data) as HikvisionResponse
+  try {
+    const response = await axios.get<string>(url, {
+      auth: { username, password },
+      responseType: 'text',
+      timeout: 10000,
+    })
+    responseData = response.data
+  } catch (err) {
+    const axiosErr = err as AxiosError
+
+    // 404 means the NVR has no IP cameras added yet — it's reachable, just empty.
+    // Any other HTTP error (401, 500) or network error is a real failure — rethrow
+    // so the caller marks the NVR as offline.
+    if (axiosErr.response?.status === 404) {
+      return []
+    }
+
+    throw err
+  }
+
+  const parsed = parser.parse(responseData) as HikvisionResponse
   const list = parsed?.InputProxyChannelStatusList?.InputProxyChannelStatus
 
   if (!list) return []
