@@ -6,6 +6,10 @@ interface MediaMTXPath {
   source?: { type: string }
 }
 
+interface ProvisionOptions {
+  sourceOnDemandCloseAfter?: string  // e.g. '60s' for playback, '300s' for live
+}
+
 // Check if a path already exists in MediaMTX
 export const getPath = async (pathName: string): Promise<MediaMTXPath | null> => {
   try {
@@ -21,7 +25,8 @@ export const getPath = async (pathName: string): Promise<MediaMTXPath | null> =>
 // Provision a new path in MediaMTX with RTSP as source
 export const provisionPath = async (
   pathName: string,
-  rtspUrl: string
+  rtspUrl: string,
+  options: ProvisionOptions = {}
 ): Promise<void> => {
   const response = await fetch(
     `${env.MEDIAMTX_API_URL}/v3/config/paths/add/${pathName}`,
@@ -29,10 +34,10 @@ export const provisionPath = async (
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        source: rtspUrl,              // RTSP URL MediaMTX pulls from
-        sourceOnDemand: true,         // only pull when viewer is watching
+        source: rtspUrl,
+        sourceOnDemand: true,
         sourceOnDemandStartTimeout: '10s',
-        sourceOnDemandCloseAfter: '10s', // stop pulling 10s after last viewer
+        sourceOnDemandCloseAfter: options.sourceOnDemandCloseAfter ?? '300s',
       }),
     }
   )
@@ -43,7 +48,7 @@ export const provisionPath = async (
   }
 }
 
-// Remove a path from MediaMTX — called when camera is deleted
+// Remove a path from MediaMTX — called when camera is deleted or playback stops
 export const removePath = async (pathName: string): Promise<void> => {
   await fetch(`${env.MEDIAMTX_API_URL}/v3/config/paths/delete/${pathName}`, {
     method: 'DELETE',

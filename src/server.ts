@@ -16,11 +16,10 @@ import cameraRoutes from './modules/cameras/cameras.routes.js'
 import streamRoutes from './modules/streams/streams.routes.js'
 import detectionRoutes from './modules/detection/detection.routes.js'
 import detectionGlobalRoutes from './modules/detection/detection.global.routes.js'
-import recordingRoutes from './modules/recordings/recordings.routes.js'
+import playbackRoutes from './modules/playback/playback.routes.js'
 
 // ─── Worker Imports ────────────────────────────────────────────────
 import { startDetectionWorker } from './modules/detection/detection.worker.js'
-import { startRecordingsWatcher, syncRecordingSizes } from './modules/recordings/recordings.watcher.js'
 
 const app = express()
 
@@ -66,7 +65,7 @@ app.use('/api/nvrs/:nvrId/cameras', cameraRoutes)
 app.use('/api/nvrs/:nvrId/detection', detectionRoutes)
 app.use('/api/streams', streamRoutes)
 app.use('/api/detection', detectionGlobalRoutes)
-app.use('/api/recordings', recordingRoutes)
+app.use('/api/playback', playbackRoutes)
 
 // ─── Global Error Handler (must be last) ───────────────────────────
 app.use(errorHandler)
@@ -79,10 +78,6 @@ const start = async () => {
   initSocketService(httpServer)
 
   startDetectionWorker()
-  startRecordingsWatcher()
-
-  // Sync recording file sizes every 5 minutes
-  setInterval(syncRecordingSizes, 5 * 60 * 1000)
 
   httpServer.listen(env.PORT, () => {
     console.log(`✅ Server running on port ${env.PORT} in ${env.NODE_ENV} mode`)

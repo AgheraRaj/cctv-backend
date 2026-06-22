@@ -1,7 +1,7 @@
 import winston from 'winston'
 import { env } from '../config/env.js'
 
-const { combine, timestamp, errors, json, prettyPrint, colorize, printf } = winston.format
+const { combine, timestamp, errors, json, colorize, printf } = winston.format
 
 // Readable format for development terminal
 const devFormat = combine(
