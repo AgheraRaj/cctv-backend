@@ -1,5 +1,5 @@
 import { Response, NextFunction } from "express";
-import { string, z } from "zod";
+import { z } from "zod";
 import { AuthRequest } from "../../middleware/auth.js";
 import { AppError } from "../../middleware/errorHandler.js";
 import {

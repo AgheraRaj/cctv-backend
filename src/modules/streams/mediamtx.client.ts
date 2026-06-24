@@ -6,10 +6,6 @@ interface MediaMTXPath {
   source?: { type: string }
 }
 
-interface ProvisionOptions {
-  sourceOnDemandCloseAfter?: string  // e.g. '60s' for playback, '300s' for live
-}
-
 // Check if a path already exists in MediaMTX
 export const getPath = async (pathName: string): Promise<MediaMTXPath | null> => {
   try {
@@ -26,7 +22,7 @@ export const getPath = async (pathName: string): Promise<MediaMTXPath | null> =>
 export const provisionPath = async (
   pathName: string,
   rtspUrl: string,
-  options: ProvisionOptions = {}
+  options: { sourceOnDemandCloseAfter?: string } = {}
 ): Promise<void> => {
   const response = await fetch(
     `${env.MEDIAMTX_API_URL}/v3/config/paths/add/${pathName}`,
@@ -36,7 +32,7 @@ export const provisionPath = async (
       body: JSON.stringify({
         source: rtspUrl,
         sourceOnDemand: true,
-        sourceOnDemandStartTimeout: '10s',
+        sourceOnDemandStartTimeout: '30s',
         sourceOnDemandCloseAfter: options.sourceOnDemandCloseAfter ?? '300s',
       }),
     }
