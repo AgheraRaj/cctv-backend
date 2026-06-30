@@ -1,71 +1,97 @@
+import { createRequire } from 'module'
 import { Cam } from 'onvif'
 import logger from '../../utils/logger.js'
-import { RecordingSegment } from './hikvision.search.js'
+import type { RecordingSegment } from './hikvision.search.js'
 
-// onvif typings are loose — define just what we need
-interface OnvifRecordingJob {
-  recordingToken?: string
-}
+const require = createRequire(import.meta.url)
+const linerase: (data: any) => any = require('onvif/lib/utils').linerase
 
-interface OnvifRecordingEvent {
-  startTime?: string | Date
-  stopTime?: string | Date
-  trackInformations?: Array<{
-    trackToken?: string
-  }>
-}
+// ── Connect ───────────────────────────────────────────────────────────────────
 
 const connectToNVR = (
   hostname: string,
   username: string,
   password: string,
   port: number
-): Promise<Cam> => {
-  return new Promise((resolve, reject) => {
-    new Cam(
-      { hostname, username, password, port },
-      function (this: Cam, err) {
-        if (err) reject(err)
-        else resolve(this)
+): Promise<Cam> =>
+  new Promise((resolve) => {
+    // Never reject — the GetSystemDateAndTime / timeShift error is non-fatal on
+    // many HiFocus NVRs. The cam object is fully usable even when this fails.
+    new Cam({ hostname, username, password, port }, function (this: Cam, err) {
+      if (err) {
+        logger.warn(`Hifocus ${hostname}: connect warning (non-fatal): ${String(err)}`)
       }
-    )
-  })
-}
-
-// Promisify cam.findRecordings
-const findRecordings = (cam: Cam): Promise<OnvifRecordingJob[]> => {
-  return new Promise((resolve, reject) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(cam as any).findRecordings({}, (err: Error | null, result: OnvifRecordingJob[]) => {
-      if (err) reject(err)
-      else resolve(result ?? [])
+      resolve(this)
     })
   })
-}
 
-// Promisify cam.getRecordingEvents for a specific token + time range
-const getRecordingEvents = (
+// ── GetRecordingSummary ───────────────────────────────────────────────────────
+
+const getRecordingSummary = (cam: Cam): Promise<{
+  dataFrom: Date
+  dataUntil: Date
+  numberRecordings: number
+} | null> =>
+  new Promise((resolve) => {
+    ;(cam as any).getRecordingSummary((err: Error | null, result: any) => {
+      if (err) {
+        logger.debug(`Hifocus GetRecordingSummary failed: ${String(err)}`)
+        resolve(null)
+      } else {
+        resolve(result)
+      }
+    })
+  })
+
+// ── GetRecordings ─────────────────────────────────────────────────────────────
+
+const getRecordings = (cam: Cam): Promise<any[]> =>
+  new Promise((resolve, reject) => {
+    ;(cam as any).getRecordings((err: Error | null, items: any) => {
+      if (err) reject(err)
+      else resolve(items ? (Array.isArray(items) ? items : [items]) : [])
+    })
+  })
+
+// ── GetRecordingInformation (fixed) ──────────────────────────────────────────
+// onvif 0.8.1 bug: getRecordingInformation() reads the wrong response key.
+// Fixed by calling cam._request() directly with the correct response key.
+
+const getRecordingInformation = (
   cam: Cam,
-  recordingToken: string,
-  startTime: Date,
-  endTime: Date
-): Promise<OnvifRecordingEvent[]> => {
-  return new Promise((resolve, reject) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(cam as any).getRecordingEvents(
+  recordingToken: string
+): Promise<{ earliestRecording?: Date; latestRecording?: Date } | null> =>
+  new Promise((resolve) => {
+    const camAny = cam as any
+
+    camAny._request(
       {
-        recordingToken,
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        maxResults: 100,
+        service: 'search',
+        body:
+          camAny._envelopeHeader() +
+          '<GetRecordingInformation xmlns="http://www.onvif.org/ver10/search/wsdl">' +
+          '<RecordingToken>' + recordingToken + '</RecordingToken>' +
+          '</GetRecordingInformation>' +
+          camAny._envelopeFooter(),
       },
-      (err: Error | null, result: OnvifRecordingEvent[]) => {
-        if (err) reject(err)
-        else resolve(result ?? [])
+      (err: Error | null, data: any) => {
+        if (err) {
+          logger.warn(`Hifocus GetRecordingInformation failed for "${recordingToken}": ${String(err)}`)
+          resolve(null)
+          return
+        }
+        try {
+          const info = linerase(data)?.getRecordingInformationResponse?.recordingInformation
+          resolve(info ?? null)
+        } catch (parseErr) {
+          logger.warn(`Hifocus GetRecordingInformation parse error for "${recordingToken}": ${String(parseErr)}`)
+          resolve(null)
+        }
       }
     )
   })
-}
+
+// ── Main export ───────────────────────────────────────────────────────────────
 
 export const searchHifocusRecordings = async (
   ip: string,
@@ -76,37 +102,84 @@ export const searchHifocusRecordings = async (
   startTime: Date,
   endTime: Date
 ): Promise<RecordingSegment[]> => {
-  const cam = await connectToNVR(ip, username, password, httpPort)
+  logger.info(
+    `Hifocus search: http://${ip}:${httpPort} ch${channel} ` +
+      `range=${startTime.toISOString()}→${endTime.toISOString()}`
+  )
 
-  let recordings: OnvifRecordingJob[]
+  let cam: Cam
   try {
-    recordings = await findRecordings(cam)
+    cam = await connectToNVR(ip, username, password, httpPort)
   } catch (err) {
-    logger.error(`Hifocus findRecordings failed for ${ip}: ${String(err)}`)
-    return []
+    logger.error(`Hifocus: cannot connect to ${ip}:${httpPort}: ${String(err)}`)
+    throw new Error(`Cannot connect to HiFocus NVR at ${ip}: ${String(err)}`)
   }
+
+  // GetRecordingSummary — used as fallback time range
+  const summary = await getRecordingSummary(cam)
+  let summaryFrom:  Date | null = null
+  let summaryUntil: Date | null = null
+
+  if (summary) {
+    summaryFrom  = summary.dataFrom  instanceof Date ? summary.dataFrom  : new Date(summary.dataFrom)
+    summaryUntil = summary.dataUntil instanceof Date ? summary.dataUntil : new Date(summary.dataUntil)
+    logger.info(
+      `Hifocus ${ip}: ${summary.numberRecordings} recording(s), ` +
+        `${summaryFrom.toISOString()} → ${summaryUntil.toISOString()}`
+    )
+    if (endTime < summaryFrom || startTime > summaryUntil) {
+      logger.info(`Hifocus ${ip}: query range is outside available recordings`)
+      return []
+    }
+  }
+
+  let allRecordings: any[]
+  try {
+    allRecordings = await getRecordings(cam)
+  } catch (err) {
+    logger.error(`Hifocus GetRecordings failed for ${ip}: ${String(err)}`)
+    throw new Error(`HiFocus GetRecordings failed: ${String(err)}`)
+  }
+
+  logger.info(`Hifocus ${ip}: ${allRecordings.length} total recording token(s)`)
+  if (allRecordings.length === 0) return []
 
   const segments: RecordingSegment[] = []
 
-  for (const rec of recordings) {
-    if (!rec.recordingToken) continue
+  for (const rec of allRecordings) {
+    const token: string = rec?.recordingToken ?? rec?.$?.token
+    if (!token) continue
 
-    let events: OnvifRecordingEvent[]
-    try {
-      events = await getRecordingEvents(cam, rec.recordingToken, startTime, endTime)
-    } catch (err) {
-      logger.warn(`Hifocus getRecordingEvents failed token=${rec.recordingToken}: ${String(err)}`)
+    const info = await getRecordingInformation(cam, token)
+
+    let recStart: Date | null = null
+    let recEnd:   Date | null = null
+
+    if (info?.earliestRecording) {
+      recStart = info.earliestRecording instanceof Date ? info.earliestRecording : new Date(info.earliestRecording)
+    }
+    if (info?.latestRecording) {
+      recEnd = info.latestRecording instanceof Date ? info.latestRecording : new Date(info.latestRecording)
+    }
+
+    // Fallback to summary range if GetRecordingInformation returns no dates
+    if (!recStart || isNaN(recStart.getTime())) recStart = summaryFrom
+    if (!recEnd   || isNaN(recEnd.getTime()))   recEnd   = summaryUntil
+
+    if (!recStart || !recEnd) {
+      logger.warn(`Hifocus ${ip}: no time range for token "${token}" — skipping`)
       continue
     }
 
-    for (const event of events) {
-      const start = event.startTime ? new Date(event.startTime) : null
-      const end = event.stopTime ? new Date(event.stopTime) : null
-      if (!start || !end) continue
+    if (recEnd < startTime || recStart > endTime) continue
 
-      segments.push({ channel, startTime: start, endTime: end })
-    }
+    const clippedStart = recStart < startTime ? startTime : recStart
+    const clippedEnd   = recEnd   > endTime   ? endTime   : recEnd
+
+    logger.info(`Hifocus ${ip}: matched token "${token}" → ${clippedStart.toISOString()}→${clippedEnd.toISOString()}`)
+    segments.push({ channel, startTime: clippedStart, endTime: clippedEnd })
   }
 
+  logger.info(`Hifocus ${ip} ch${channel}: returning ${segments.length} segment(s)`)
   return segments
 }
