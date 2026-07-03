@@ -47,11 +47,6 @@ export const generatePlaybackRTSP = (
     }
 
     case 'HIFOCUS': {
-      // HiFocus RTSP playback URL format — confirmed from the NVR's own
-      // GetReplayUri SOAP response:
-      //   rtsp://<ip>:554/chID=1&date=YYYY-MM-DD&time=HH:MM:SS&timelen=<sec>&streamType=main&linkType=tcp
-      // The NVR does NOT accept starttime/endtime ISO params; it uses
-      // date + time (UTC) of the start, plus timelen in seconds.
       const timelen = Math.round((endTime.getTime() - startTime.getTime()) / 1000)
       return (
         `rtsp://${nvr.username}:${nvr.password}@${nvr.ip}:${nvr.rtspPort}/` +

@@ -62,14 +62,9 @@ export const resolvePlayback = async (
 
   await provisionPath(pathName, rtspUrl, { sourceOnDemandCloseAfter: '120s' })
 
-  // Wait for MediaMTX to actually finish connecting to the NVR and produce
-  // the first HLS segment BEFORE handing the URL to the frontend. This
-  // eliminates the race condition that causes intermittent 500s on index.m3u8.
   const ready = await waitForPathReady(pathName)
   if (!ready) {
     logger.warn(`Playback path "${pathName}" not ready after timeout — NVR may be slow or unreachable`)
-    // Don't throw — return the URL anyway. The frontend retry logic will
-    // handle the remaining cases (e.g. very slow NVR disk seeks).
   }
 
   const whepUrl = `${env.MEDIAMTX_WEBRTC_URL}/${pathName}/whep`
@@ -113,18 +108,23 @@ export const seekPlayback = async (
   const timestamp = Date.now()
   const pathName  = `${nvrId}-ch${channel}-pb-${timestamp}`
 
+  // Remove the old path FIRST — the NVR only allows one RTSP playback
+  // connection per channel at a time. If the old session is still open
+  // when waitForPathReady fires its warmup fetch, the NVR rejects the
+  // new connection with 302 ("not enough bandwidth").
+  removePath(oldPathName).catch(() => {})
+
+  // Give the NVR 300ms to fully tear down the old RTSP session before
+  // the new one tries to connect. Without this gap, some NVRs still
+  // reject the second connection even after the first is removed.
+  await new Promise(resolve => setTimeout(resolve, 300))
+
   await provisionPath(pathName, rtspUrl, { sourceOnDemandCloseAfter: '120s' })
 
-  // Same readiness wait as resolvePlayback — seeks are just as susceptible
-  // to this race condition since they also provision a brand new path.
   const ready = await waitForPathReady(pathName)
   if (!ready) {
     logger.warn(`Seek path "${pathName}" not ready after timeout`)
   }
-
-  // Only remove the old path AFTER the new one is confirmed ready — avoids
-  // a gap where neither stream is available.
-  removePath(oldPathName).catch(() => {})
 
   const whepUrl = `${env.MEDIAMTX_WEBRTC_URL}/${pathName}/whep`
   const hlsUrl  = `${env.MEDIAMTX_HLS_URL}/${pathName}/index.m3u8`
