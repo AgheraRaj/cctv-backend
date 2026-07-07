@@ -2,101 +2,116 @@ import { Response, NextFunction } from 'express'
 import { z } from 'zod'
 import { AuthRequest } from '../../middleware/auth.js'
 import { AppError } from '../../middleware/errorHandler.js'
-import { resolvePlayback, seekPlayback, stopPlayback, getRecordings } from './playback.service.js'
-
-// ─── Schemas ─────────────────────────────────────────────────────────────────
-
-const resolveSchema = z.object({
-  nvrId:     z.string().min(1, 'nvrId is required.'),
-  channel:   z.number().int().min(1, 'channel must be at least 1.'),
-  startTime: z.string().datetime('startTime must be ISO 8601.'),
-  endTime:   z.string().datetime('endTime must be ISO 8601.'),
-})
-
-const seekSchema = z.object({
-  nvrId:        z.string().min(1, 'nvrId is required.'),
-  channel:      z.number().int().min(1, 'channel must be at least 1.'),
-  startTime:    z.string().datetime('startTime must be ISO 8601.'),
-  endTime:      z.string().datetime('endTime must be ISO 8601.'),
-  oldPathName:  z.string().min(1, 'oldPathName is required.'),
-  tzOffsetMs:   z.number().default(0),
-})
+import prisma from '../../config/db.js'
+import { decrypt } from '../../utils/crypto.js'
+import { searchHikvisionRecordings, type RecordingSegment } from './hikvision.search.js'
+import { searchHifocusRecordings } from './hifocus.search.js'
 
 const recordingsQuerySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD.'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 })
 
-// ─── POST /api/playback/resolve ──────────────────────────────────────────────
+const recordingDaysQuerySchema = z.object({
+  year:  z.coerce.number().int().min(2000).max(2100),
+  month: z.coerce.number().int().min(1).max(12),
+})
 
-export const resolve = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+// ── GET /api/playback/recordings/:nvrId/:channel ─────────────────────────────
+
+export const recordings = async (
+  req: AuthRequest, res: Response, next: NextFunction
+): Promise<void> => {
   try {
-    const parsed = resolveSchema.safeParse(req.body)
-    if (!parsed.success) throw new AppError(400, parsed.error.issues[0].message)
-
-    const { nvrId, channel, startTime, endTime } = parsed.data
-    const start = new Date(startTime)
-    const end   = new Date(endTime)
-    if (end <= start) throw new AppError(400, 'endTime must be after startTime.')
-
-    const result = await resolvePlayback(nvrId, channel, start, end)
-    res.status(200).json(result)
-  } catch (err) {
-    next(err)
-  }
-}
-
-// ─── POST /api/playback/seek ─────────────────────────────────────────────────
-// Called when user seeks to a new position on the timeline.
-// Stops old stream, starts new stream from the seek position.
-
-export const seek = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const parsed = seekSchema.safeParse(req.body)
-    if (!parsed.success) throw new AppError(400, parsed.error.issues[0].message)
-
-    const { nvrId, channel, startTime, endTime, oldPathName, tzOffsetMs } = parsed.data
-    const start = new Date(startTime)
-    const end   = new Date(endTime)
-    if (end <= start) throw new AppError(400, 'endTime must be after startTime.')
-
-    const result = await seekPlayback(nvrId, channel, start, end, oldPathName, tzOffsetMs)
-    res.status(200).json(result)
-  } catch (err) {
-    next(err)
-  }
-}
-
-// ─── DELETE /api/playback/:pathName ──────────────────────────────────────────
-
-export const stop = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const { pathName } = req.params
-    if (!pathName || Array.isArray(pathName)) throw new AppError(400, 'pathName is required.')
-    await stopPlayback(pathName)
-    res.status(204).send()
-  } catch (err) {
-    next(err)
-  }
-}
-
-// ─── GET /api/playback/recordings/:nvrId/:channel?date=YYYY-MM-DD ────────────
-
-export const recordings = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const { nvrId, channel: channelParam } = req.params
-    
-    if (!nvrId || Array.isArray(nvrId)) throw new AppError(400, 'nvrId is required.')
-    if (!channelParam || Array.isArray(channelParam)) throw new AppError(400, 'channel is required.')
-
+    const { nvrId, channel: channelParam } = req.params as { nvrId: string; channel: string }
     const channel = parseInt(channelParam, 10)
-    if (isNaN(channel) || channel < 1) throw new AppError(400, 'channel must be a positive integer.')
+    if (isNaN(channel) || channel < 1) throw new AppError(400, 'Invalid channel.')
 
     const queryParsed = recordingsQuerySchema.safeParse(req.query)
     if (!queryParsed.success) throw new AppError(400, queryParsed.error.issues[0].message)
 
-    const segments = await getRecordings(nvrId, channel, queryParsed.data.date)
+    const { date } = queryParsed.data
+    const startTime = new Date(`${date}T00:00:00Z`)
+    const endTime = new Date(`${date}T23:59:59Z`)
+
+    const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } })
+    if (!nvr) throw new AppError(404, `NVR ${nvrId} not found.`)
+
+    const password = decrypt(nvr.password)
+
+    let segments: RecordingSegment[]
+    if (nvr.type === 'HIKVISION') {
+      segments = await searchHikvisionRecordings(
+        nvr.ip, nvr.httpPort, nvr.username, password, channel, startTime, endTime
+      )
+    } else if (nvr.type === 'HIFOCUS') {
+      segments = await searchHifocusRecordings(
+        nvr.ip, nvr.httpPort, nvr.username, password, channel, startTime, endTime
+      )
+    } else {
+      throw new AppError(400, `Unsupported NVR type: ${nvr.type}`)
+    }
+
     res.status(200).json(segments)
-  } catch (err) {
-    next(err)
-  }
+  } catch (err) { next(err) }
+}
+
+export const recordingDays = async (
+  req: AuthRequest, res: Response, next: NextFunction
+): Promise<void> => {
+  try {
+    const { nvrId, channel: channelParam } = req.params as { nvrId: string; channel: string }
+    const channel = parseInt(channelParam, 10)
+    if (isNaN(channel) || channel < 1) throw new AppError(400, 'Invalid channel.')
+
+    const parsed = recordingDaysQuerySchema.safeParse(req.query)
+    if (!parsed.success) throw new AppError(400, parsed.error.issues[0].message)
+
+    const { year, month } = parsed.data
+
+    // Full month window in UTC
+    const startTime = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0))
+    const endTime   = new Date(Date.UTC(year, month,     0, 23, 59, 59)) // last day of month
+
+    const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } })
+    if (!nvr) throw new AppError(404, `NVR ${nvrId} not found.`)
+
+    const password = decrypt(nvr.password)
+    const days = new Set<number>()
+
+    if (nvr.type === 'HIKVISION') {
+      const segments = await searchHikvisionRecordings(
+        nvr.ip, nvr.httpPort, nvr.username, password, channel, startTime, endTime
+      )
+      for (const seg of segments) {
+        const cursor = new Date(seg.startTime)
+        cursor.setUTCHours(0, 0, 0, 0)
+        while (cursor <= seg.endTime) {
+          if (cursor.getUTCMonth() + 1 === month && cursor.getUTCFullYear() === year) {
+            days.add(cursor.getUTCDate())
+          }
+          cursor.setUTCDate(cursor.getUTCDate() + 1)
+        }
+      }
+
+    } else if (nvr.type === 'HIFOCUS') {
+      const segments = await searchHifocusRecordings(
+        nvr.ip, nvr.httpPort, nvr.username, password, channel, startTime, endTime
+      )
+      for (const seg of segments) {
+        const cursor = new Date(seg.startTime)
+        cursor.setUTCHours(0, 0, 0, 0)
+        while (cursor <= seg.endTime) {
+          if (cursor.getUTCMonth() + 1 === month && cursor.getUTCFullYear() === year) {
+            days.add(cursor.getUTCDate())
+          }
+          cursor.setUTCDate(cursor.getUTCDate() + 1)
+        }
+      }
+
+    } else {
+      throw new AppError(400, `Unsupported NVR type: ${nvr.type}`)
+    }
+
+    res.status(200).json({ days: Array.from(days).sort((a, b) => a - b) })
+  } catch (err) { next(err) }
 }

@@ -1,5 +1,7 @@
 import { createRequire } from 'module'
 import { Cam } from 'onvif'
+import { env } from '../../config/env.js'
+import { withRetry, withTimeout, mapWithConcurrency } from '../../utils/retry.js'
 import logger from '../../utils/logger.js'
 import type { RecordingSegment } from './hikvision.search.js'
 
@@ -26,44 +28,57 @@ const connectToNVR = (
   })
 
 // ── GetRecordingSummary ───────────────────────────────────────────────────────
+// Retried on failure — a transient SOAP/network fault here shouldn't abort
+// the whole search when a retry is cheap and safe (read-only, idempotent).
 
 const getRecordingSummary = (cam: Cam): Promise<{
   dataFrom: Date
   dataUntil: Date
   numberRecordings: number
 } | null> =>
-  new Promise((resolve) => {
-    ;(cam as any).getRecordingSummary((err: Error | null, result: any) => {
-      if (err) {
-        logger.debug(`Hifocus GetRecordingSummary failed: ${String(err)}`)
-        resolve(null)
-      } else {
-        resolve(result)
-      }
-    })
+  withRetry(
+    () =>
+      new Promise((resolve, reject) => {
+        ;(cam as any).getRecordingSummary((err: Error | null, result: any) => {
+          if (err) reject(err)
+          else resolve(result)
+        })
+      }),
+    { retries: env.PLAYBACK_SEARCH_RETRIES, baseDelayMs: 500, label: 'Hifocus GetRecordingSummary' }
+  ).catch((err) => {
+    logger.debug(`Hifocus GetRecordingSummary failed after retries: ${String(err)}`)
+    return null
   })
 
 // ── GetRecordings ─────────────────────────────────────────────────────────────
 
 const getRecordings = (cam: Cam): Promise<any[]> =>
-  new Promise((resolve, reject) => {
-    ;(cam as any).getRecordings((err: Error | null, items: any) => {
-      if (err) reject(err)
-      else resolve(items ? (Array.isArray(items) ? items : [items]) : [])
-    })
-  })
+  withRetry(
+    () =>
+      new Promise<any[]>((resolve, reject) => {
+        ;(cam as any).getRecordings((err: Error | null, items: any) => {
+          if (err) reject(err)
+          else resolve(items ? (Array.isArray(items) ? items : [items]) : [])
+        })
+      }),
+    { retries: env.PLAYBACK_SEARCH_RETRIES, baseDelayMs: 500, label: 'Hifocus GetRecordings' }
+  )
 
 // ── GetRecordingInformation (fixed) ──────────────────────────────────────────
 // onvif 0.8.1 bug: getRecordingInformation() reads the wrong response key.
 // Fixed by calling cam._request() directly with the correct response key.
+//
+// Wrapped in an explicit timeout (the underlying onvif lib's _request has no
+// visible timeout of its own) so one unresponsive token can't hang the whole
+// search indefinitely (Phase 5).
 
 const getRecordingInformation = (
   cam: Cam,
   recordingToken: string
-): Promise<{ earliestRecording?: Date; latestRecording?: Date } | null> =>
-  new Promise((resolve) => {
-    const camAny = cam as any
+): Promise<{ earliestRecording?: Date; latestRecording?: Date } | null> => {
+  const camAny = cam as any
 
+  const request = new Promise<{ earliestRecording?: Date; latestRecording?: Date } | null>((resolve) => {
     camAny._request(
       {
         service: 'search',
@@ -91,6 +106,14 @@ const getRecordingInformation = (
     )
   })
 
+  return withTimeout(request, env.PLAYBACK_RECORDING_INFO_TIMEOUT_MS, `GetRecordingInformation(${recordingToken})`).catch(
+    (err) => {
+      logger.warn(`Hifocus GetRecordingInformation timed out for "${recordingToken}": ${String(err)}`)
+      return null
+    }
+  )
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export const searchHifocusRecordings = async (
@@ -117,11 +140,11 @@ export const searchHifocusRecordings = async (
 
   // GetRecordingSummary — used as fallback time range
   const summary = await getRecordingSummary(cam)
-  let summaryFrom:  Date | null = null
+  let summaryFrom: Date | null = null
   let summaryUntil: Date | null = null
 
   if (summary) {
-    summaryFrom  = summary.dataFrom  instanceof Date ? summary.dataFrom  : new Date(summary.dataFrom)
+    summaryFrom = summary.dataFrom instanceof Date ? summary.dataFrom : new Date(summary.dataFrom)
     summaryUntil = summary.dataUntil instanceof Date ? summary.dataUntil : new Date(summary.dataUntil)
     logger.info(
       `Hifocus ${ip}: ${summary.numberRecordings} recording(s), ` +
@@ -144,16 +167,23 @@ export const searchHifocusRecordings = async (
   logger.info(`Hifocus ${ip}: ${allRecordings.length} total recording token(s)`)
   if (allRecordings.length === 0) return []
 
+  // Parallelized per-token lookups (bounded concurrency) — this was the
+  // single biggest HiFocus search latency win identified in Phase 5/9:
+  // previously strictly sequential, now up to
+  // env.PLAYBACK_SEARCH_MAX_CONCURRENCY in flight at once.
+  const tokens = allRecordings
+    .map((rec) => (rec?.recordingToken ?? rec?.$?.token) as string | undefined)
+    .filter((t): t is string => Boolean(t))
+
+  const infos = await mapWithConcurrency(tokens, env.PLAYBACK_SEARCH_MAX_CONCURRENCY, (token) =>
+    getRecordingInformation(cam, token).then((info) => ({ token, info }))
+  )
+
   const segments: RecordingSegment[] = []
 
-  for (const rec of allRecordings) {
-    const token: string = rec?.recordingToken ?? rec?.$?.token
-    if (!token) continue
-
-    const info = await getRecordingInformation(cam, token)
-
+  for (const { token, info } of infos) {
     let recStart: Date | null = null
-    let recEnd:   Date | null = null
+    let recEnd: Date | null = null
 
     if (info?.earliestRecording) {
       recStart = info.earliestRecording instanceof Date ? info.earliestRecording : new Date(info.earliestRecording)
@@ -164,7 +194,7 @@ export const searchHifocusRecordings = async (
 
     // Fallback to summary range if GetRecordingInformation returns no dates
     if (!recStart || isNaN(recStart.getTime())) recStart = summaryFrom
-    if (!recEnd   || isNaN(recEnd.getTime()))   recEnd   = summaryUntil
+    if (!recEnd || isNaN(recEnd.getTime())) recEnd = summaryUntil
 
     if (!recStart || !recEnd) {
       logger.warn(`Hifocus ${ip}: no time range for token "${token}" — skipping`)
@@ -174,7 +204,7 @@ export const searchHifocusRecordings = async (
     if (recEnd < startTime || recStart > endTime) continue
 
     const clippedStart = recStart < startTime ? startTime : recStart
-    const clippedEnd   = recEnd   > endTime   ? endTime   : recEnd
+    const clippedEnd = recEnd > endTime ? endTime : recEnd
 
     logger.info(`Hifocus ${ip}: matched token "${token}" → ${clippedStart.toISOString()}→${clippedEnd.toISOString()}`)
     segments.push({ channel, startTime: clippedStart, endTime: clippedEnd })

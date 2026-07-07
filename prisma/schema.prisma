@@ -6,8 +6,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// Enums
-
 enum Role {
   ADMIN
   VIEWER
@@ -23,12 +21,10 @@ enum NVRStatus {
   OFFLINE
 }
 
-// Models
-
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  password  String   // bcrypt hashed — never stored plain
+  password  String
   role      Role     @default(VIEWER)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -36,7 +32,7 @@ model User {
 
 model Station {
   id        String   @id @default(cuid())
-  name      String                      // "Mumbai Central"
+  name      String
   city      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -46,67 +42,72 @@ model Station {
 }
 
 model NVR {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   stationId    String
-  station      Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  station      Station   @relation(fields: [stationId], references: [id], onDelete: Cascade)
 
-  type         NVRType                  // HIKVISION | HIFOCUS
-  name         String                   // "Block A - NVR 1"
-  ip           String                   // "192.168.1.10"
-  rtspPort     Int      @default(554)
-  httpPort     Int      @default(80)
+  type         NVRType
+  name         String
+  ip           String
+  rtspPort     Int       @default(554)
+  httpPort     Int       @default(80)
   username     String
-  password     String                   // AES-256 encrypted before storing
+  password     String    // AES-256 encrypted
 
   status       NVRStatus @default(OFFLINE)
   lastSeenAt   DateTime?
   offlineSince DateTime?
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   cameras      Camera[]
 }
 
 model Camera {
-  id       String  @id @default(cuid())
-  nvrId    String
-  nvr      NVR     @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  id           String    @id @default(cuid())
+  nvrId        String
+  nvr          NVR       @relation(fields: [nvrId], references: [id], onDelete: Cascade)
 
-  channel  Int                          // 1–32
-  name     String                       // "Cafeteria — front view"
-  areaTag  String?                      // "cafeteria" — optional tag for filtering
-  isActive Boolean @default(true)       // false = no camera physically on this channel
+  channel      Int
+  name         String
+  areaTag      String?
+  isActive     Boolean   @default(true)
 
   isOnline     Boolean   @default(false)
   lastSeenAt   DateTime?
   offlineSince DateTime?
-  protocol     String?                  // populated for Hikvision only
+  protocol     String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  recordings Recording[]
+  recordings   Recording[]
 
-  @@unique([nvrId, channel])            // one camera per channel per NVR
+  @@unique([nvrId, channel])
 }
 
+// Recording index — metadata only, no local files.
+// Actual footage lives on the NVR HDD. This table is a cache of what
+// the NVR has recorded, used to answer "what's available on date X?"
+// without making a live ONVIF/ISAPI query every time.
 model Recording {
-  id        String   @id @default(cuid())
-  cameraId  String
-  camera    Camera   @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  id             String    @id @default(cuid())
+  cameraId       String
+  camera         Camera    @relation(fields: [cameraId], references: [id], onDelete: Cascade)
 
-  nvrId     String
-  channel   Int
+  nvrId          String
+  channel        Int
 
-  filename  String          // "2026-05-12_10-00-00.mp4"
-  filePath  String          // full absolute path on disk
-  startTime DateTime        // parsed from filename
-  endTime   DateTime?       // null while recording is ongoing
-  sizeBytes BigInt @default(0)
+  // ONVIF recording token (e.g. "Record_1_0") — used by GetReplayUri
+  recordingToken String?
 
-  createdAt DateTime @default(now())
+  startTime      DateTime
+  endTime        DateTime?   // null while recording is ongoing
+  isOngoing      Boolean     @default(false)
 
-  @@index([nvrId, channel])
+  createdAt      DateTime    @default(now())
+
+  @@index([nvrId, channel, startTime, endTime])
   @@index([startTime])
 }

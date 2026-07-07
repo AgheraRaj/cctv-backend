@@ -23,6 +23,17 @@ const envSchema = z.object({
   MEDIAMTX_API_URL: z.string().min(1, "MEDIAMTX_API_URL is required"),
   MEDIAMTX_WEBRTC_URL: z.string().min(1, "MEDIAMTX_WEBRTC_URL is required"),
   MEDIAMTX_HLS_URL: z.string().min(1, "MEDIAMTX_HLS_URL is required"),
+  BACKEND_PUBLIC_URL: z.string().url().default('http://localhost:3000'),
+
+  // ── Playback tuning (all optional, sane defaults) ───────────────────────────
+  PLAYBACK_ORPHAN_GRACE_MS: z.coerce.number().int().positive().default(60_000),
+  PLAYBACK_RESUME_RESEEK_THRESHOLD_MS: z.coerce.number().int().positive().default(15_000),
+  PLAYBACK_NVR_SLOT_RELEASE_MS: z.coerce.number().int().positive().default(1_500),
+  PLAYBACK_PATH_READY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  PLAYBACK_MEDIAMTX_API_RETRIES: z.coerce.number().int().min(0).default(2),
+  PLAYBACK_SEARCH_RETRIES: z.coerce.number().int().min(0).default(2),
+  PLAYBACK_SEARCH_MAX_CONCURRENCY: z.coerce.number().int().positive().default(5),
+  PLAYBACK_RECORDING_INFO_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 const parsed = envSchema.safeParse(process.env);

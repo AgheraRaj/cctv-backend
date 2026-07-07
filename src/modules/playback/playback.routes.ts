@@ -1,12 +1,12 @@
 import { Router } from 'express'
 import { authenticate } from '../../middleware/auth.js'
-import { resolve, seek, stop, recordings } from './playback.controller.js'
+import { recordingDays, recordings } from './playback.controller.js'
+import { streamRecording } from './playback.stream.js'
 
 const router = Router()
 
-router.post('/resolve',                       authenticate, resolve)
-router.post('/seek',                          authenticate, seek)
-router.delete('/:pathName',                   authenticate, stop)
+router.get('/recording-days/:nvrId/:channel', authenticate, recordingDays)
 router.get('/recordings/:nvrId/:channel',     authenticate, recordings)
+router.get('/stream',                          authenticate, streamRecording)
 
 export default router
