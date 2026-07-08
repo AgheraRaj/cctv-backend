@@ -38,7 +38,7 @@ const getRecordingSummary = (cam: Cam): Promise<{
 } | null> =>
   withRetry(
     () =>
-      new Promise((resolve, reject) => {
+      new Promise<{ dataFrom: Date; dataUntil: Date; numberRecordings: number }>((resolve, reject) => {
         ;(cam as any).getRecordingSummary((err: Error | null, result: any) => {
           if (err) reject(err)
           else resolve(result)

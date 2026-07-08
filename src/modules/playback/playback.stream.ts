@@ -19,9 +19,9 @@ interface ActiveStream {
   ffmpeg: ChildProcess
   kill: () => void
 }
-const activeStreams = new Map<string, ActiveStream>()
+export const activeStreams = new Map<string, ActiveStream>()
 
-const streamKey = (nvrId: string, channel: number): string => `${nvrId}:${channel}`
+export const streamKey = (nvrId: string, channel: number): string => `${nvrId}:${channel}`
 
 // ── Codec probing ─────────────────────────────────────────────────────────────
 // H.265/HEVC has no native <video> support in Chrome/Firefox/Edge, so those
@@ -195,17 +195,27 @@ export async function streamRecording(req: Request, res: Response): Promise<void
   // (each gets its own timestamp-suffixed key) since there's no "supersede"
   // relationship between them the way there is between sequential seeks.
   const key = isDownload
-    ? `download:${streamKey(nvrId, channelNo)}:${Date.now()}`
-    : streamKey(nvrId, channelNo)
+  ? `download:${streamKey(nvrId, channelNo)}:${Date.now()}`
+  : streamKey(nvrId, channelNo)
 
-  if (!isDownload) {
-    const existing = activeStreams.get(key)
-    if (existing) {
-      logger.info(`[streamRecording] superseding in-flight stream for ${key}`)
-      existing.kill()
-      await new Promise((r) => setTimeout(r, env.PLAYBACK_NVR_SLOT_RELEASE_MS))
-    }
+if (!isDownload) {
+  const existing = activeStreams.get(key)
+  if (existing) {
+    logger.info(`[streamRecording] superseding in-flight stream for ${key}`)
+    existing.kill()
+    await new Promise((r) => setTimeout(r, env.PLAYBACK_NVR_SLOT_RELEASE_MS))
   }
+} else {
+  // For downloads: kill any active PLAYBACK stream on this channel first,
+  // then wait for the NVR to release the slot before opening the download.
+  const playbackKey = streamKey(nvrId, channelNo)
+  const existingPlayback = activeStreams.get(playbackKey)
+  if (existingPlayback) {
+    logger.info(`[streamRecording] killing playback stream before download for ${playbackKey}`)
+    existingPlayback.kill()
+    await new Promise((r) => setTimeout(r, env.PLAYBACK_NVR_SLOT_RELEASE_MS))
+  }
+}
 
   const ffmpeg = spawn('ffmpeg', [
     '-loglevel',       'warning',
