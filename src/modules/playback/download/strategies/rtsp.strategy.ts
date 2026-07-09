@@ -81,19 +81,18 @@ export class RtspDownloadStrategy implements DownloadStrategy {
 
     // ── Spawn ffmpeg ──────────────────────────────────────────────────────────
     const ffmpeg = spawn('ffmpeg', [
-      '-loglevel',       'warning',
-      '-rtsp_transport', 'tcp',
-      '-timeout',        '10000000',   // 10s socket I/O timeout (µs)
-      '-i',              rtspUrl,
-      '-t',              String(durationSec),
-      '-c:v',            'copy',       // never transcode — stream copy only
-      '-an',             // drop audio — pcm_alaw is not MP4-compatible
-      // faststart writes moov atom first → seekable after download
-      // This differs from frag_keyframe+empty_moov used in /stream (which
-      // is optimised for live streaming, not saved files).
-      '-movflags',       'faststart',
-      '-f',              'mp4',
-      'pipe:1',
+  '-loglevel',       'warning',
+  '-rtsp_transport', 'tcp',
+  '-timeout',        '10000000',
+  '-i',              rtspUrl,
+  '-t',              String(durationSec),
+  '-c:v',            'copy',
+  '-an',
+  // faststart needs a seekable output; pipe:1 isn't seekable, so fragment
+  // instead — no seek-back required, still playable/seekable downstream.
+  '-movflags',       'frag_keyframe+empty_moov+default_base_moof',
+  '-f',              'mp4',
+  'pipe:1',
     ])
 
     const killFfmpeg = () => {

@@ -122,7 +122,7 @@ function buildIsapiPath(channel: number, start: Date, end: Date): string {
     d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
   return (
     `/ISAPI/ContentMgmt/download` +
-    `?starttime=${fmt(start)}&endtime=${fmt(end)}&channel=${channel}`
+    `?startTime=${fmt(start)}&endTime=${fmt(end)}&channel=${channel}`
   )
 }
 
