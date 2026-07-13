@@ -215,13 +215,46 @@ export const searchHifocusRecordings = async (
   );
   if (allRecordings.length === 0) return [];
 
+  // 1. Identify the VideoSourceToken for the requested channel
+  // Assuming channel is 1-indexed (1, 2, 3...)
+  const videoSourceTokens = Object.keys((cam as any).videoSources || {});
+  const targetVideoSourceToken = videoSourceTokens[channel - 1];
+
+  if (!targetVideoSourceToken) {
+    logger.warn(
+      `Hifocus ${ip}: Channel ${channel} has no corresponding VideoSourceToken`,
+    );
+    return [];
+  }
+
+  // 2. Filter the recordings to only include tokens for this specific channel
   // Parallelized per-token lookups (bounded concurrency) — this was the
   // single biggest HiFocus search latency win identified in Phase 5/9:
   // previously strictly sequential, now up to
   // env.PLAYBACK_SEARCH_MAX_CONCURRENCY in flight at once.
   const tokens = allRecordings
+    .filter((rec) => {
+      const sourceId = rec?.Configuration?.Source?.SourceId;
+      if (sourceId) {
+        return sourceId === targetVideoSourceToken;
+      }
+      // Fallback: check if the recording token itself implies the channel number
+      const tokenStr = (rec?.recordingToken ?? rec?.$?.token) as string | undefined;
+      if (tokenStr) {
+        const channelStr = channel.toString().padStart(3, "0");
+        return tokenStr.includes(channelStr) || tokenStr.includes(`_${channel}`);
+      }
+      return false;
+    })
     .map((rec) => (rec?.recordingToken ?? rec?.$?.token) as string | undefined)
     .filter((t): t is string => Boolean(t));
+
+  if (tokens.length === 0) {
+    logger.info(
+      `Hifocus ${ip}: No recordings found for channel ${channel} (${targetVideoSourceToken})`,
+    );
+    return [];
+  }
 
   const infos = await mapWithConcurrency(
     tokens,
