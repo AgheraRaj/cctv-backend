@@ -9,14 +9,25 @@
  *   - timelen is duration in seconds from that start point
  *
  * SEEK ARCHITECTURE (re-resolve on seek — industry standard):
- *   1. First call: GetReplayUri to get base URL + extract NVR timezone offset
- *   2. Return offset to frontend alongside hlsUrl
- *   3. On seek: frontend sends new startTime → backend constructs URL using offset
- *   4. No additional ONVIF calls needed for seeking → fast (~1s)
+ *   1. First call for a given NVR: GetReplayUri + GetRecordingInformation to
+ *      calibrate the NVR's timezone offset against the token's TRUE,
+ *      unclipped earliest-recording time (NOT the requested/seek startTime —
+ *      calibrating against a moving target makes the offset self-cancelling,
+ *      which was the root cause of "playback/seek always starts from the
+ *      first recording" regardless of what startTime was requested).
+ *   2. That offset is cached per NVR (ip:httpPort) for TZ_OFFSET_CACHE_TTL_MS,
+ *      since an NVR's clock/timezone essentially never changes mid-session.
+ *   3. On every call (initial + seeks): GetReplayUri is still invoked to
+ *      arm/authorize the recording token on the NVR, but the offset itself
+ *      is only recalibrated when the cache is cold/expired.
+ *   4. Backend builds the actual playback URL from (requested startTime +
+ *      cached offset) — this is what makes seeking land on the correct
+ *      point instead of snapping back to the recording start.
  */
 import http from "http";
 import crypto from "crypto";
 import logger from "../../utils/logger.js";
+import { searchHifocusRecordings, getRecordingTimeRange } from "./hifocus.search.js";
 
 // ── WS-Security envelope ──────────────────────────────────────────────────────
 
@@ -108,8 +119,15 @@ const extractUri = (xml: string): string | null => {
 };
 
 // ── Parse NVR timezone offset from returned URL ───────────────────────────────
-// The NVR URL contains local date/time. We know the UTC recording start
-// from GetRecordingSummary. The difference = NVR timezone offset in seconds.
+// The NVR URL contains local date/time for the resolved RecordingToken.
+// `recordingStartUtc` MUST be the token's true, unclipped earliest-recording
+// UTC timestamp (from getRecordingTimeRange) — NOT the requested playback/
+// seek startTime. GetReplayUri's returned local time corresponds to the
+// recording's actual start, so anchoring against anything else (especially
+// the very value the caller is trying to solve for) makes this offset
+// self-cancelling: build the URL back from it and you always land on the
+// same instant regardless of what was requested. See file header for the
+// full explanation of the bug this fixes.
 
 const parseOffsetFromUrl = (
   replayUrl: string,
@@ -167,6 +185,16 @@ export const buildHifocusRtspUrl = (
   return injectCredentials(url, username, password);
 };
 
+// ── Per-NVR timezone offset cache ─────────────────────────────────────────────
+// Calibration requires an extra GetRecordingInformation round-trip, so we do
+// it once per NVR and reuse the result — an NVR's clock/timezone doesn't
+// change mid-session, and this is what makes repeated seeks fast instead of
+// re-deriving (and re-corrupting) the offset on every request.
+const TZ_OFFSET_CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24h — re-calibrate daily in case of NVR clock/config drift
+const tzOffsetCache = new Map<string, { offsetMs: number; expiresAt: number }>()
+
+const tzOffsetCacheKey = (ip: string, httpPort: number): string => `${ip}:${httpPort}`
+
 // ── Public: get replay URI + timezone offset (called once per session) ────────
 
 export interface HifocusReplayInfo {
@@ -184,7 +212,29 @@ export const getHifocusReplayInfo = async (
   startTimeUtc: Date,
   endTimeUtc: Date,
 ): Promise<HifocusReplayInfo> => {
-  const token = `Record_${channel}_0`;
+  let token = `Record_${channel}_0`;
+
+  try {
+    const segments = await searchHifocusRecordings(
+      ip,
+      httpPort,
+      username,
+      password,
+      channel,
+      startTimeUtc,
+      endTimeUtc
+    );
+    if (segments.length > 0) {
+      const segment = segments.find(s => s.startTime <= startTimeUtc && s.endTime >= startTimeUtc) || segments[0];
+      if (segment.token) {
+        token = segment.token;
+      }
+    } else {
+      logger.warn(`Hifocus GetReplayUri: No segments found for ${startTimeUtc.toISOString()}, using fallback token`);
+    }
+  } catch (err) {
+    logger.warn(`Hifocus GetReplayUri: search failed, using fallback token: ${String(err)}`);
+  }
 
   logger.info(`Hifocus GetReplayUri: ${ip}:${httpPort} token="${token}"`);
 
@@ -204,7 +254,8 @@ export const getHifocusReplayInfo = async (
     buildEnvelope(username, password, body),
   );
 
-  if (result.status !== 200) {
+   if (result.status !== 200) {
+    logger.error(`Hifocus GetReplayUri full fault body: ${result.body}`)
     throw new Error(
       `GetReplayUri returned HTTP ${result.status}: ${result.body.slice(0, 200)}`,
     );
@@ -219,8 +270,48 @@ export const getHifocusReplayInfo = async (
 
   logger.info(`Hifocus raw replay URI: ${rawUri}`);
 
-  // Compute NVR timezone offset from the returned URL
-  const tzOffsetMs = parseOffsetFromUrl(rawUri, startTimeUtc);
+  // ── NVR timezone offset ──────────────────────────────────────────────────
+  // Reuse a cached, previously-calibrated offset if we have a fresh one for
+  // this NVR. Recalibrating on every call (including every seek) using the
+  // requested startTime as the anchor is what caused playback/seeks to
+  // always snap back to the same instant — see file header.
+  const cacheKey = tzOffsetCacheKey(ip, httpPort);
+  const cached = tzOffsetCache.get(cacheKey);
+  let tzOffsetMs: number;
+
+  if (cached && cached.expiresAt > Date.now()) {
+    tzOffsetMs = cached.offsetMs;
+  } else {
+    // Calibrate against the token's TRUE, unclipped earliest-recording time
+    // — not startTimeUtc, which is just whatever the caller asked for (the
+    // very thing we'd be solving for) and is often already clipped to the
+    // request window upstream in searchHifocusRecordings().
+    let anchor = startTimeUtc; // last-resort fallback if calibration fails
+    try {
+      const { earliestRecording } = await getRecordingTimeRange(
+        ip,
+        httpPort,
+        username,
+        password,
+        token,
+      );
+      if (earliestRecording && !isNaN(earliestRecording.getTime())) {
+        anchor = earliestRecording;
+      } else {
+        logger.warn(
+          `Hifocus tz calibration: no earliestRecording for token "${token}", falling back to requested startTime (offset may be wrong for seeks)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        `Hifocus tz calibration: getRecordingTimeRange failed, falling back to requested startTime: ${String(err)}`,
+      );
+    }
+
+    tzOffsetMs = parseOffsetFromUrl(rawUri, anchor);
+    tzOffsetCache.set(cacheKey, { offsetMs: tzOffsetMs, expiresAt: Date.now() + TZ_OFFSET_CACHE_TTL_MS });
+    logger.info(`Hifocus tz offset calibrated for ${cacheKey}: ${tzOffsetMs / 3600000}h (cached ${TZ_OFFSET_CACHE_TTL_MS / 3600000}h)`);
+  }
 
   // Build the actual URL for the requested time range using the offset
   const rtspUrl = buildHifocusRtspUrl(

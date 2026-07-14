@@ -1,0 +1,95 @@
+diff --git a/node_modules/onvif/lib/cam.js b/node_modules/onvif/lib/cam.js
+index a041573..aa55aba 100644
+--- a/node_modules/onvif/lib/cam.js
++++ b/node_modules/onvif/lib/cam.js
+@@ -678,46 +678,50 @@ Cam.prototype.getCapabilities = function(callback) {
+             this._envelopeFooter()
+ 	}, function(err, data, xml) {
+ 		if (!err) {
+-			/**
+-             * Device capabilities
+-             * @name Cam#capabilities
+-             * @type {Cam~Capabilities}
+-             */
+-			this.capabilities = linerase(data[0]['getCapabilitiesResponse'][0]['capabilities'][0]);
+-			// fill Cam#uri property
+-			if (!this.uri) {
+-				/**
+-				 * Device service URIs
+-				 * @name Cam#uri
+-				 * @property {url} [PTZ]
+-				 * @property {url} [media]
+-				 * @property {url} [imaging]
+-				 * @property {url} [events]
+-				 * @property {url} [device]
+-				 */
+-				this.uri = {};
+-			}
+-			['PTZ', 'media', 'imaging', 'events', 'device'].forEach(function(name) {
+-				if (this.capabilities[name] && this.capabilities[name].XAddr) {
+-					this.uri[name.toLowerCase()] = this._parseUrl(this.capabilities[name].XAddr);
+-				}
+-			}.bind(this));
+-			// extensions, eg. deviceIO
+-			if (this.capabilities.extension) {
+-				Object.keys(this.capabilities.extension).forEach(function(ext) {
+-					// TODO think about complex extensions like `telexCapabilities` and `scdlCapabilities`
+-					if (this.capabilities.extension[ext].XAddr) {
+-						this.uri[ext] = url.parse(this.capabilities.extension[ext].XAddr);
+-					}
+-				}.bind(this));
+-			}
+-			// HACK for a Profile G NVR that has 'replay' but did not have 'recording' in GetCapabilities
+-			if ((this.uri['replay']) && !this.uri['recording']) {
+-				var tempRecorderXaddr = this.uri['replay'].href.replace('replay', 'recording');
+-				console.warn("WARNING: Adding " + tempRecorderXaddr + " for bad Profile G device");
+-				this.uri['recording'] = url.parse(tempRecorderXaddr);
+-			}
+-		}
++    try {
++        const capabilitiesNode = data &&
++            data[0] &&
++            data[0]['getCapabilitiesResponse'] &&
++            data[0]['getCapabilitiesResponse'][0] &&
++            data[0]['getCapabilitiesResponse'][0]['capabilities'] &&
++            data[0]['getCapabilitiesResponse'][0]['capabilities'][0];
++
++        if (!capabilitiesNode) {
++            throw new Error(
++                'GetCapabilities response did not include a <Capabilities> element ' +
++                '(device returned an unexpected or empty response shape)'
++            );
++        }
++
++        this.capabilities = linerase(capabilitiesNode);
++        // fill Cam#uri property
++        if (!this.uri) {
++            this.uri = {};
++        }
++        ['PTZ', 'media', 'imaging', 'events', 'device'].forEach(function(name) {
++            if (this.capabilities[name] && this.capabilities[name].XAddr) {
++                this.uri[name.toLowerCase()] = this._parseUrl(this.capabilities[name].XAddr);
++            }
++        }.bind(this));
++        if (this.capabilities.extension) {
++            Object.keys(this.capabilities.extension).forEach(function(ext) {
++                if (this.capabilities.extension[ext].XAddr) {
++                    this.uri[ext] = url.parse(this.capabilities.extension[ext].XAddr);
++                }
++            }.bind(this));
++        }
++        if ((this.uri['replay']) && !this.uri['recording']) {
++            var tempRecorderXaddr = this.uri['replay'].href.replace('replay', 'recording');
++            console.warn("WARNING: Adding " + tempRecorderXaddr + " for bad Profile G device");
++            this.uri['recording'] = url.parse(tempRecorderXaddr);
++        }
++    } catch (parseErr) {
++        err = parseErr;
++    }
++}
++if (callback) {
++    callback.call(this, err, this.capabilities, xml);
++}
+ 		if (callback) {
+ 			callback.call(this, err, this.capabilities, xml);
+ 		}

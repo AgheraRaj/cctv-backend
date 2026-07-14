@@ -1,68 +1,19 @@
-import { Cam } from 'onvif'
+// src/modules/detection/hifocus.discoverer.ts
+//
+// Channel discovery for HiFocus NVRs — fully native CGI now, no ONVIF.
+// Previously used the `onvif` npm package (GetProfiles for channel list,
+// hardcoded isOnline:true for every profile). Dropped entirely after
+// hitting three separate crashes in that library's response parsing on
+// this device's edge-case shapes (disconnected-channel profiles missing
+// fields the library assumes always exist). queryNodeList + queryRecStatus
+// give us the same information — channel list and real live status — with
+// none of that fragility, sharing one login session per discovery run.
+
 import { DiscoveredCamera } from './hikvision.discoverer.js'
+import { login } from '../playback/hifocus.reclog.js'
+import { fetchNodeList, parseNodeListResponse } from './hifocus.nodelist.js'
+import { fetchRecStatus, parseRecStatusResponse } from './hifocus.recstatus.js'
 import logger from '../../utils/logger.js'
-
-interface OnvifProfile {
-  '$': { token: string }
-  videoEncoderConfiguration?: {
-    encoding?: string
-  }
-}
-
-const extractChannel = (token: string): number | null => {
-  // Common patterns:
-  // 1. "Something_1_Something" (Original)
-  // 2. "Channel1", "Profile1", "Camera1"
-  // 3. "IPCamera_01"
-  // 4. "MediaProfile_1"
-
-  // Pattern 1: parts[1] (e.g., "Something_1_Something")
-  const parts = token.split('_')
-  if (parts.length >= 2) {
-    const channel = parseInt(parts[1], 10)
-    if (!isNaN(channel)) return channel
-  }
-
-  // Pattern 2: Extract numbers from "Channel1", "Profile1" etc.
-  const match = token.match(/(?:Channel|Profile|Camera|Ch)(\d+)/i)
-  if (match) {
-    return parseInt(match[1], 10)
-  }
-
-  // Pattern 3: Just any number at the end
-  const endMatch = token.match(/(\d+)$/)
-  if (endMatch) {
-    return parseInt(endMatch[1], 10)
-  }
-
-  return null
-}
-
-const connectToNVR = (
-  hostname: string,
-  username: string,
-  password: string,
-  port: number
-): Promise<Cam> => {
-  return new Promise((resolve, reject) => {
-    new Cam(
-      { hostname, username, password, port },
-      function (this: Cam, err) {
-        if (err) reject(err)
-        else resolve(this)
-      }
-    )
-  })
-}
-
-const getProfiles = (cam: Cam): Promise<OnvifProfile[]> => {
-  return new Promise((resolve, reject) => {
-    cam.getProfiles((err, profiles) => {
-      if (err) reject(err)
-      else resolve(profiles as OnvifProfile[])
-    })
-  })
-}
 
 export const discoverHifocusCameras = async (
   ip: string,
@@ -70,39 +21,28 @@ export const discoverHifocusCameras = async (
   username: string,
   password: string
 ): Promise<DiscoveredCamera[] | null> => {
-  const cam = await connectToNVR(ip, username, password, httpPort)
+  const session = await login(ip, httpPort, username, password)
 
-  let profiles: OnvifProfile[] = []
-  
-  try {
-    profiles = await getProfiles(cam)
-  } catch (err) {
-    logger.error(`Failed to fetch ONVIF profiles for Hi-Focus NVR ${ip}: ${String(err)}`)
-    // If profiles fail, we still consider the NVR reachable (since connectToNVR succeeded)
-    // But we return null to indicate discovery was inconclusive, avoiding marking all cameras offline
+  const channels = parseNodeListResponse(await fetchNodeList(ip, httpPort, session))
+  if (channels.length === 0) {
+    logger.warn(`Hifocus queryNodeList returned no channels for NVR ${ip}`)
     return null
   }
 
-  const channelMap = new Map<number, DiscoveredCamera>()
-
-  for (const profile of profiles) {
-    const token = profile['$']?.token
-    if (!token) continue
-
-    const channel = extractChannel(token)
-    if (channel === null) {
-      logger.debug(`Skipping unknown ONVIF token format: ${token}`)
-      continue
-    }
-
-    if (!channelMap.has(channel)) {
-      channelMap.set(channel, {
-        channel,
-        isOnline: true,
-        protocol: 'ONVIF',
-      })
-    }
+  // Live per-channel status — if this specific call fails, we still know
+  // the channel list from queryNodeList above, so fall back to `true`
+  // (online) per channel rather than losing discovery entirely over a
+  // status-check hiccup.
+  let liveStatus = new Map<number, boolean>()
+  try {
+    liveStatus = parseRecStatusResponse(await fetchRecStatus(ip, httpPort, session))
+  } catch (err) {
+    logger.warn(`Failed to fetch live channel status for Hi-Focus NVR ${ip}, defaulting all discovered channels to online: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  return Array.from(channelMap.values())
+  return channels.map(({ channel }) => ({
+    channel,
+    isOnline: liveStatus.get(channel) ?? true,
+    protocol: 'HIFOCUS_CGI',
+  }))
 }

@@ -151,6 +151,39 @@ const getRecordingInformation = (
   });
 };
 
+// ── Unclipped recording range for a single token ──────────────────────────────
+// Used by hifocus.replay.ts to calibrate the NVR's timezone offset against
+// the token's TRUE earliest recording time — deliberately NOT the
+// query-window-clipped `startTime` that searchHifocusRecordings() returns in
+// RecordingSegment.startTime. Calibrating against a clipped/requested time
+// instead of the real recording start is what caused the seek-always-resets
+// bug (the offset calc becomes self-referential against whatever time the
+// caller passed in, so it always cancels back out to the same instant).
+
+export const getRecordingTimeRange = async (
+  ip: string,
+  httpPort: number,
+  username: string,
+  password: string,
+  token: string,
+): Promise<{ earliestRecording: Date | null; latestRecording: Date | null }> => {
+  const cam = await connectToNVR(ip, username, password, httpPort);
+  const info = await getRecordingInformation(cam, token);
+
+  const earliestRecording = info?.earliestRecording
+    ? info.earliestRecording instanceof Date
+      ? info.earliestRecording
+      : new Date(info.earliestRecording)
+    : null;
+  const latestRecording = info?.latestRecording
+    ? info.latestRecording instanceof Date
+      ? info.latestRecording
+      : new Date(info.latestRecording)
+    : null;
+
+  return { earliestRecording, latestRecording };
+};
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export const searchHifocusRecordings = async (
@@ -301,7 +334,7 @@ export const searchHifocusRecordings = async (
     logger.info(
       `Hifocus ${ip}: matched token "${token}" → ${clippedStart.toISOString()}→${clippedEnd.toISOString()}`,
     );
-    segments.push({ channel, startTime: clippedStart, endTime: clippedEnd });
+    segments.push({ channel, startTime: clippedStart, endTime: clippedEnd, token });
   }
 
   logger.info(

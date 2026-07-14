@@ -8,7 +8,8 @@ import {
   searchHikvisionRecordings,
   type RecordingSegment,
 } from "./hikvision.search.js";
-import { searchHifocusRecordings } from "./hifocus.search.js";
+import { searchHifocusRecLog } from "./hifocus.reclog.js";
+import { mergeIntervals, splitIntoFixedDurationSegments, toSegmentDTOs } from "./segment.utils.js";
 
 const recordingsQuerySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -20,6 +21,9 @@ const recordingDaysQuerySchema = z.object({
 });
 
 // ── GET /api/playback/recordings/:nvrId/:channel ─────────────────────────────
+// Hikvision: unchanged — ISAPI already returns real per-clip segments.
+// HiFocus: now goes through queryChlRecLog + merge/split, instead of the
+// ONVIF GetRecordingInformation call that only returned one all-day span.
 
 export const recordings = async (
   req: AuthRequest,
@@ -48,9 +52,8 @@ export const recordings = async (
 
     const password = decrypt(nvr.password);
 
-    let segments: RecordingSegment[];
     if (nvr.type === "HIKVISION") {
-      segments = await searchHikvisionRecordings(
+      const segments = await searchHikvisionRecordings(
         nvr.ip,
         nvr.httpPort,
         nvr.username,
@@ -59,25 +62,39 @@ export const recordings = async (
         startTime,
         endTime,
       );
-    } else if (nvr.type === "HIFOCUS") {
-      segments = await searchHifocusRecordings(
-        nvr.ip,
-        nvr.httpPort,
-        nvr.username,
-        password,
-        channel,
-        startTime,
-        endTime,
-      );
-    } else {
-      throw new AppError(400, `Unsupported NVR type: ${nvr.type}`);
+      res.status(200).json(segments);
+      return;
     }
 
-    res.status(200).json(segments);
+    if (nvr.type === "HIFOCUS") {
+      const rawSegments = await searchHifocusRecLog(
+        nvr.ip,
+        nvr.httpPort,
+        nvr.username,
+        password,
+        channel,
+        startTime,
+        endTime,
+      );
+
+      const merged = mergeIntervals(rawSegments);
+      const hourly = splitIntoFixedDurationSegments(merged);
+
+      res.status(200).json(toSegmentDTOs(hourly));
+      return;
+    }
+
+    throw new AppError(400, `Unsupported NVR type: ${nvr.type}`);
   } catch (err) {
     next(err);
   }
 };
+
+// ── GET /api/playback/recording-days/:nvrId/:channel ─────────────────────────
+// Unchanged — day-level bucketing doesn't need fine-grained hourly
+// segmentation, so this still uses the original per-vendor search functions.
+// (Swap the HIFOCUS branch to searchHifocusRecLog too if you want this to
+// reflect the richer recType data — not required for day-level presence.)
 
 export const recordingDays = async (
   req: AuthRequest,
@@ -109,8 +126,10 @@ export const recordingDays = async (
     const password = decrypt(nvr.password);
     const days = new Set<number>();
 
+    let segments: RecordingSegment[];
+
     if (nvr.type === "HIKVISION") {
-      const segments = await searchHikvisionRecordings(
+      segments = await searchHikvisionRecordings(
         nvr.ip,
         nvr.httpPort,
         nvr.username,
@@ -119,21 +138,8 @@ export const recordingDays = async (
         startTime,
         endTime,
       );
-      for (const seg of segments) {
-        const cursor = new Date(seg.startTime);
-        cursor.setUTCHours(0, 0, 0, 0);
-        while (cursor <= seg.endTime) {
-          if (
-            cursor.getUTCMonth() + 1 === month &&
-            cursor.getUTCFullYear() === year
-          ) {
-            days.add(cursor.getUTCDate());
-          }
-          cursor.setUTCDate(cursor.getUTCDate() + 1);
-        }
-      }
     } else if (nvr.type === "HIFOCUS") {
-      const segments = await searchHifocusRecordings(
+      segments = await searchHifocusRecLog(
         nvr.ip,
         nvr.httpPort,
         nvr.username,
@@ -142,21 +148,22 @@ export const recordingDays = async (
         startTime,
         endTime,
       );
-      for (const seg of segments) {
-        const cursor = new Date(seg.startTime);
-        cursor.setUTCHours(0, 0, 0, 0);
-        while (cursor <= seg.endTime) {
-          if (
-            cursor.getUTCMonth() + 1 === month &&
-            cursor.getUTCFullYear() === year
-          ) {
-            days.add(cursor.getUTCDate());
-          }
-          cursor.setUTCDate(cursor.getUTCDate() + 1);
-        }
-      }
     } else {
       throw new AppError(400, `Unsupported NVR type: ${nvr.type}`);
+    }
+
+    for (const seg of segments) {
+      const cursor = new Date(seg.startTime);
+      cursor.setUTCHours(0, 0, 0, 0);
+      while (cursor <= seg.endTime) {
+        if (
+          cursor.getUTCMonth() + 1 === month &&
+          cursor.getUTCFullYear() === year
+        ) {
+          days.add(cursor.getUTCDate());
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
     }
 
     res.status(200).json({ days: Array.from(days).sort((a, b) => a - b) });

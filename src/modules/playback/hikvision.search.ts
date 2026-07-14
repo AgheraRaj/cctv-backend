@@ -8,6 +8,7 @@ export interface RecordingSegment {
   startTime: Date;
   endTime: Date;
   channel: number;
+  token?: string;
 }
 
 const parser = new XMLParser({
