@@ -91,28 +91,6 @@ function buildDigestHeader(
   return header
 }
 
-// ── Low-level HTTP helper (node http — no extra deps) ─────────────────────────
-
-function httpGet(
-  options: http.RequestOptions,
-  onData:  (chunk: Buffer) => boolean,   // return false to abort
-  onEnd:   () => void,
-  onError: (err: Error) => void,
-): http.ClientRequest {
-  const req = http.request(options, (res) => {
-    res.on('data', (chunk: Buffer) => {
-      const ok = onData(chunk)
-      if (!ok) req.destroy()
-    })
-    res.on('end', onEnd)
-    res.on('error', onError)
-  })
-  req.on('error', onError)
-  req.setTimeout(30_000, () => req.destroy(new Error('ISAPI request timeout')))
-  req.end()
-  return req
-}
-
 // ── ISAPI download path ───────────────────────────────────────────────────────
 // /ISAPI/ContentMgmt/download streams the raw recording file from NVR disk.
 // The NVR's RTSP playback server is completely bypassed.
