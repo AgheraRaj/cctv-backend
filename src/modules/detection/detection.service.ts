@@ -11,85 +11,51 @@ import {
   emitCameraNew,
 } from '../../services/socketService.js'
 
+// ═══════════════════════════════════════════════════════════════════
+// TIER 1 — NVR HEARTBEAT
+// Cheap, ONVIF-independent reachability check. This — and only this —
+// decides NVR online/offline. Scheduled on its own always-on BullMQ
+// queue (nvr-heartbeat-queue). Nothing UI-session-scoped ever calls
+// this on a start/stop basis; it runs from the moment an NVR is
+// created until the moment it's deleted.
+// ═══════════════════════════════════════════════════════════════════
+
 // Consecutive-failure debounce so a single transient heartbeat miss doesn't
-// immediately flip the NVR to OFFLINE — matches how commercial VMS platforms
-// avoid flapping on momentary network blips. In-memory is fine here: worst
-// case after a process restart is one extra failure needed before the first
-// OFFLINE transition, which is an acceptable tradeoff for not needing a
-// migration. Move this into a DB column if you need it to survive restarts.
+// immediately flip the NVR to OFFLINE. In-memory is fine here: worst case
+// after a process restart is one extra failure needed before the first
+// OFFLINE transition. Move this into a DB column if you need it to survive
+// restarts or run multiple worker replicas for HA (see note in the worker
+// file about horizontal scaling).
 const consecutiveFailures = new Map<string, number>()
 const OFFLINE_THRESHOLD = 3 // require 3 consecutive heartbeat failures before declaring OFFLINE
 
-export const runDetectionForNVR = async (nvrId: string): Promise<void> => {
-  // 1 — Fetch NVR from DB with credentials
+export const runNvrHeartbeat = async (nvrId: string): Promise<void> => {
   const nvr = await prisma.nVR.findUnique({
     where: { id: nvrId },
-    include: { cameras: true },
+    select: { id: true, ip: true, httpPort: true, offlineSince: true },
   })
 
   if (!nvr) {
-    logger.warn(`Detection skipped — NVR ${nvrId} not found in DB`)
+    logger.warn(`Heartbeat skipped — NVR ${nvrId} not found in DB`)
+    consecutiveFailures.delete(nvrId)
     return
   }
 
-  // 2 — TIER 1: cheap, ONVIF-independent reachability check.
-  // This — and only this — decides NVR online/offline. A full ONVIF
-  // profile/capability bootstrap failing later must never affect this.
   const heartbeatOk = await isNvrHostReachable(nvr.ip, nvr.httpPort)
 
   const failures = heartbeatOk ? 0 : (consecutiveFailures.get(nvrId) ?? 0) + 1
   consecutiveFailures.set(nvrId, failures)
   const nvrReachable = heartbeatOk || failures < OFFLINE_THRESHOLD
 
-  // 3 — Update NVR status + emit Socket.io event
   const updatedNvr = await updateNVRStatus(nvrId, nvrReachable, nvr.offlineSince)
+
   emitNvrStatus({
     nvrId,
     status: updatedNvr.status as 'ONLINE' | 'OFFLINE',
     lastSeenAt: updatedNvr.lastSeenAt,
     offlineSince: updatedNvr.offlineSince,
   })
-
-  if (!nvrReachable) return
-
-  // 4 — TIER 2: per-channel camera discovery. Fully independent of NVR
-  // status now. Any failure here (including a connection-level failure
-  // talking ONVIF, which is NOT the same as the NVR host being down) is
-  // caught locally and simply skips reconciliation this cycle — it never
-  // touches NVR status or any camera's existing status.
-  const decryptedPassword = decrypt(nvr.password)
-  let discovered: DiscoveredCamera[] | null = null
-
-  try {
-    if (nvr.type === 'HIKVISION') {
-      discovered = await discoverHikvisionCameras(
-        nvr.ip,
-        nvr.httpPort,
-        nvr.username,
-        decryptedPassword
-      )
-    } else {
-      discovered = await discoverHifocusCameras(
-        nvr.ip,
-        nvr.httpPort,
-        nvr.username,
-        decryptedPassword
-      )
-    }
-  } catch (err) {
-    logger.warn(
-      `Camera discovery failed for reachable NVR ${nvr.name} (${nvr.ip}) — ` +
-        `leaving existing camera statuses unchanged this cycle: ${err instanceof Error ? err.message : String(err)}`
-    )
-    return
-  }
-
-  if (discovered !== null) {
-    await reconcileCameras(nvrId, discovered, nvr.cameras)
-  }
 }
-
-// ─── NVR Status ──────────────────────────────────────────
 
 const updateNVRStatus = async (
   nvrId: string,
@@ -116,19 +82,12 @@ const updateNVRStatus = async (
         },
         select: { status: true, lastSeenAt: true, offlineSince: true },
       }),
-      // When the NVR host itself is confirmed unreachable (not a camera/
-      // channel discovery hiccup), all its cameras are effectively offline
-      // too. Mark them all so the frontend never shows a camera as online
-      // under an offline NVR.
+      // When the NVR host itself is confirmed unreachable, all its cameras
+      // are effectively offline too. Mark them all so the frontend never
+      // shows a camera as online under an offline NVR.
       prisma.camera.updateMany({
-        where: {
-          nvrId,
-          isOnline: true,
-        },
-        data: {
-          isOnline: false,
-          offlineSince: new Date(),
-        },
+        where: { nvrId, isOnline: true },
+        data: { isOnline: false, offlineSince: new Date() },
       }),
     ])
 
@@ -136,7 +95,66 @@ const updateNVRStatus = async (
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// TIER 2 — CAMERA STATUS + DISCOVERY
+// Both vendor adapters (ISAPI channels/status for Hikvision;
+// queryNodeList + queryRecStatus for HiFocus) return the channel list
+// AND live per-channel status in the same call — there is no separate
+// cheap "just health" endpoint to call instead. So this single function
+// serves both "update known camera status" and "detect new/removed
+// channels" simultaneously; that's a property of the vendor APIs, not
+// a scheduling shortcut.
+//
+// What IS independently controlled is scheduling: this runs on its own
+// always-on queue (camera-status-queue), separate from the NVR
+// heartbeat queue, and is NEVER started or stopped by the frontend's
+// page-visit endpoints. Leaving the NVR page no longer has any way to
+// affect this.
+// ═══════════════════════════════════════════════════════════════════
+
+export const runCameraStatusCheck = async (nvrId: string): Promise<void> => {
+  const nvr = await prisma.nVR.findUnique({
+    where: { id: nvrId },
+    include: { cameras: true },
+  })
+
+  if (!nvr) {
+    logger.warn(`Camera status check skipped — NVR ${nvrId} not found in DB`)
+    return
+  }
+
+  // Skip cameras work for an NVR the heartbeat has already declared
+  // OFFLINE — its cameras were already cascaded to offline in the same
+  // transaction (see updateNVRStatus above), and probing a dead host
+  // would just burn a full ONVIF/ISAPI timeout for a result we already
+  // know. This is the one place the two tiers intentionally talk to
+  // each other, via the DB's `status` column — not via a shared timer
+  // or shared queue.
+  if (nvr.status === 'OFFLINE') return
+
+  const decryptedPassword = decrypt(nvr.password)
+  let discovered: DiscoveredCamera[] | null = null
+
+  try {
+    discovered =
+      nvr.type === 'HIKVISION'
+        ? await discoverHikvisionCameras(nvr.ip, nvr.httpPort, nvr.username, decryptedPassword)
+        : await discoverHifocusCameras(nvr.ip, nvr.httpPort, nvr.username, decryptedPassword)
+  } catch (err) {
+    logger.warn(
+      `Camera status check failed for reachable NVR ${nvr.name} (${nvr.ip}) — ` +
+        `leaving existing camera statuses unchanged this cycle: ${err instanceof Error ? err.message : String(err)}`
+    )
+    return
+  }
+
+  if (discovered !== null) {
+    await reconcileCameras(nvrId, discovered, nvr.cameras)
+  }
+}
+
 // ─── Camera Reconciliation ───────────────────────────────
+// Unchanged from the original implementation.
 
 const reconcileCameras = async (
   nvrId: string,
@@ -153,12 +171,10 @@ const reconcileCameras = async (
 
   const now = new Date()
 
-  // Process each discovered camera
   for (const [channel, discoveredCam] of discoveredMap) {
     const existing = existingMap.get(channel)
 
     if (!existing) {
-      // New camera — insert into DB and notify frontend
       const newCamera = await prisma.camera.create({
         data: {
           nvrId,
@@ -186,7 +202,6 @@ const reconcileCameras = async (
       continue
     }
 
-    // Existing camera — update status only
     const goingOffline = !discoveredCam.isOnline && existing.isOnline
     const comingOnline = discoveredCam.isOnline && !existing.isOnline
 
@@ -195,17 +210,12 @@ const reconcileCameras = async (
       data: {
         isOnline: discoveredCam.isOnline,
         lastSeenAt: discoveredCam.isOnline ? now : undefined,
-        offlineSince: comingOnline
-          ? null
-          : goingOffline
-          ? now
-          : existing.offlineSince,
+        offlineSince: comingOnline ? null : goingOffline ? now : existing.offlineSince,
         protocol: discoveredCam.protocol ?? undefined,
       },
       select: { id: true, isOnline: true, offlineSince: true },
     })
 
-    // Only emit when status actually changed — avoids noisy frontend updates
     if (goingOffline || comingOnline) {
       emitCameraStatus({
         cameraId: existing.id,
@@ -217,7 +227,6 @@ const reconcileCameras = async (
     }
   }
 
-  // Mark cameras not in discovery response as offline
   for (const [channel, existing] of existingMap) {
     if (!discoveredMap.has(channel) && existing.isOnline) {
       await prisma.camera.update({

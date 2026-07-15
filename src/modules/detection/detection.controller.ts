@@ -1,16 +1,20 @@
+// src/modules/detection/detection.controller.ts
+//
+// These routes are called by the frontend on NVR page enter (`start`)
+// and page exit (`stop`). They intentionally control NO background
+// scheduling anymore. NVR heartbeat and camera status polling run
+// continuously for every NVR from creation to deletion — see
+// nvr-heartbeat.worker.ts and camera-status.worker.ts. Route paths are
+// unchanged so the existing frontend calls don't need to change.
+
 import { Response, NextFunction } from 'express'
 import { AuthRequest } from '../../middleware/auth.js'
 import { AppError } from '../../middleware/errorHandler.js'
-import {
-  addActiveNVR,
-  removeActiveNVR,
-  isNVRActive,
-  getAllActiveNVRs,
-} from './detection.worker.js'
-import { runDetectionForNVR } from './detection.service.js'
 import prisma from '../../config/db.js'
+import { runCameraStatusCheck } from './detection.service.js'
+import { isNvrHeartbeatActive, getAllHeartbeatNVRs } from './nvr-heartbeat.worker.js'
 
-// ─── Start Detection ──────────────────────────────────────
+// ─── "Start" — one-off refresh, not a scheduler toggle ────
 
 export const startDetection = async (
   req: AuthRequest,
@@ -20,18 +24,18 @@ export const startDetection = async (
   try {
     const nvrId = req.params.nvrId as string
 
-    // Verify NVR exists
     const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } })
     if (!nvr) throw new AppError(404, 'NVR not found.')
 
-    // Add to active set (idempotent — safe to call again if already active)
-    await addActiveNVR(nvrId)
-
-    // Run first detection immediately — don't wait 30s for first result
-    await runDetectionForNVR(nvrId)
+    // Give the UI a fresh camera list/status immediately on page open
+    // instead of waiting for the next scheduled cycle. This is a single
+    // one-off call — it does NOT start, stop, or otherwise touch any
+    // recurring job. Background monitoring for this NVR was already
+    // running before this request and continues regardless of it.
+    await runCameraStatusCheck(nvrId)
 
     res.status(200).json({
-      message: `Detection started for NVR "${nvr.name}".`,
+      message: `Camera status refreshed for NVR "${nvr.name}".`,
       nvrId,
     })
   } catch (err) {
@@ -39,7 +43,7 @@ export const startDetection = async (
   }
 }
 
-// ─── Stop Detection ───────────────────────────────────────
+// ─── "Stop" — deliberate no-op ─────────────────────────────
 
 export const stopDetection = async (
   req: AuthRequest,
@@ -49,15 +53,15 @@ export const stopDetection = async (
   try {
     const nvrId = req.params.nvrId as string
 
-    const active = await isNVRActive(nvrId)
-    if (!active) {
-      throw new AppError(400, 'Detection is not running for this NVR.')
-    }
+    const nvr = await prisma.nVR.findUnique({ where: { id: nvrId } })
+    if (!nvr) throw new AppError(404, 'NVR not found.')
 
-    await removeActiveNVR(nvrId)
-
+    // Intentionally does nothing to any scheduler. Leaving the NVR page
+    // must never stop NVR or camera health monitoring — this endpoint
+    // exists only so the current frontend call has somewhere to land
+    // without needing a frontend change.
     res.status(200).json({
-      message: 'Detection stopped.',
+      message: 'NVR page closed. Background health monitoring continues unaffected.',
       nvrId,
     })
   } catch (err) {
@@ -66,6 +70,8 @@ export const stopDetection = async (
 }
 
 // ─── Per-NVR Status ───────────────────────────────────────
+// Now reports the heartbeat queue's state, since that's what "is this
+// NVR actively being monitored" actually means post-refactor.
 
 export const getDetectionStatus = async (
   req: AuthRequest,
@@ -74,7 +80,7 @@ export const getDetectionStatus = async (
 ): Promise<void> => {
   try {
     const nvrId = req.params.nvrId as string
-    const active = await isNVRActive(nvrId)
+    const active = await isNvrHeartbeatActive(nvrId)
 
     res.status(200).json({
       nvrId,
@@ -85,7 +91,7 @@ export const getDetectionStatus = async (
   }
 }
 
-// ─── All Active NVRs ──────────────────────────────────────
+// ─── All Actively-Monitored NVRs ───────────────────────────
 
 export const getActiveDetection = async (
   _req: AuthRequest,
@@ -93,7 +99,7 @@ export const getActiveDetection = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const nvrIds = await getAllActiveNVRs()
+    const nvrIds = await getAllHeartbeatNVRs()
 
     if (!nvrIds.length) {
       res.status(200).json({ isRunning: false, activeNvrIds: [] })

@@ -19,7 +19,18 @@ import detectionGlobalRoutes from './modules/detection/detection.global.routes.j
 import playbackRoutes from './modules/playback/playback.routes.js'
 
 // ─── Worker Imports ────────────────────────────────────────────────
-import { startDetectionWorker } from './modules/detection/detection.worker.js'
+// Two independent always-on workers. Neither is started, stopped, or
+// otherwise controlled by the frontend's page-visit detection routes.
+import {
+  startNvrHeartbeatWorker,
+  stopNvrHeartbeatWorker,
+  reconcileHeartbeatNVRs,
+} from './modules/detection/nvr-heartbeat.worker.js'
+import {
+  startCameraStatusWorker,
+  stopCameraStatusWorker,
+  reconcileCameraStatusNVRs,
+} from './modules/detection/camera-status.worker.js'
 
 const app = express()
 
@@ -71,17 +82,46 @@ app.use('/api/playback', playbackRoutes)
 app.use(errorHandler)
 
 // ─── Start Server ──────────────────────────────────────────────────
+let httpServer: http.Server
+
 const start = async () => {
   await redis.connect()
 
-  const httpServer = http.createServer(app)
+  httpServer = http.createServer(app)
   initSocketService(httpServer)
 
-  startDetectionWorker()
+  // Both workers start unconditionally at boot and run for the
+  // lifetime of the process — neither depends on any user having a
+  // browser tab open.
+  startNvrHeartbeatWorker()
+  startCameraStatusWorker()
+
+  // Ensure every NVR already in the database is actually being polled
+  // by both queues — without this, NVRs that existed before auto-start
+  // was added (or whose job was ever lost) never get checked again
+  // automatically.
+  await reconcileHeartbeatNVRs()
+  await reconcileCameraStatusNVRs()
 
   httpServer.listen(env.PORT, () => {
     console.log(`✅ Server running on port ${env.PORT} in ${env.NODE_ENV} mode`)
   })
 }
+
+// ─── Graceful Shutdown ──────────────────────────────────────────────
+// Ensures in-flight heartbeat/camera-status jobs finish cleanly and
+// BullMQ locks are released on redeploy/restart, instead of leaving
+// stalled jobs that wait out the ~30s stall timeout before recovery.
+const shutdown = async (signal: string) => {
+  logger.info(`${signal} received — shutting down gracefully`)
+  await Promise.all([stopNvrHeartbeatWorker(), stopCameraStatusWorker()])
+  httpServer?.close(() => {
+    logger.info('HTTP server closed')
+    process.exit(0)
+  })
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
 
 start()
