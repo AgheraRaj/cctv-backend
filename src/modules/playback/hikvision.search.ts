@@ -1,3 +1,5 @@
+// src/modules/playback/hikvision.search.ts
+
 import axios from "axios";
 import { XMLParser } from "fast-xml-parser";
 import { env } from "../../config/env.js";
@@ -9,6 +11,9 @@ export interface RecordingSegment {
   endTime: Date;
   channel: number;
   token?: string;
+  playbackURI?: string; // NEW — raw rtsp playback URI with embedded name+size,
+                        // required by the ISAPI download strategy. Optional so
+                        // existing callers (adapters, segment.utils) are unaffected.
 }
 
 const parser = new XMLParser({
@@ -124,14 +129,21 @@ export const searchHikvisionRecordings = async (
   }
 
   return allItems
-    .map((item: { timeSpan?: { startTime?: string; endTime?: string } }) => {
+    .map((item: {
+      timeSpan?: { startTime?: string; endTime?: string };
+      mediaSegmentDescriptor?: { playbackURI?: string };
+    }): RecordingSegment | null => {
       const start = item?.timeSpan?.startTime;
       const end = item?.timeSpan?.endTime;
       if (!start || !end) return null;
+
+      const playbackURI = item?.mediaSegmentDescriptor?.playbackURI;
+
       return {
         channel,
         startTime: new Date(start),
         endTime: new Date(end),
+        ...(playbackURI ? { playbackURI: String(playbackURI) } : {}),
       };
     })
     .filter((s): s is RecordingSegment => s !== null);
