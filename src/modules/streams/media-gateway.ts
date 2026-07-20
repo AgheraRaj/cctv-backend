@@ -24,7 +24,7 @@
 import { env } from '../../config/env.js'
 import { AppError } from '../../middleware/errorHandler.js'
 import { withRetry } from '../../utils/retry.js'
-import logger from '../../utils/logger.js'
+
 import {
   getPath,
   provisionPath as rawProvisionPath,
@@ -144,7 +144,7 @@ export const reconcileOrphans = async (
   })
 
   if (orphaned.length > 0) {
-    logger.info(`MediaGateway: reconciling ${orphaned.length} orphaned path(s): ${orphaned.join(', ')}`)
+    console.log(`MediaGateway: reconciling ${orphaned.length} orphaned path(s): ${orphaned.join(', ')}`)
     await Promise.all(orphaned.map(closeStream))
   }
 

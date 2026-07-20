@@ -1,6 +1,6 @@
 import { env } from '../../config/env.js'
 import { AppError } from '../../middleware/errorHandler.js'
-import logger from '../../utils/logger.js'
+
 
 interface MediaMTXPath {
   name: string
@@ -133,7 +133,7 @@ export const removePathAndWait = async (
 
   // Additional buffer: NVR TCP teardown is async and not observable externally
   await new Promise((r) => setTimeout(r, nvrSlotReleaseMs))
-  logger.debug(`Path "${pathName}" removed and NVR slot released`)
+  console.debug(`Path "${pathName}" removed and NVR slot released`)
 }
 
 // ── Wait for path + HLS muxer ready ──────────────────────────────────────────
@@ -183,7 +183,7 @@ export const waitForPathReady = async (
   }
 
   if (!rtspReady) {
-    logger.warn(`waitForPathReady: RTSP never connected for "${pathName}" — check NVR reachability/credentials/time range`)
+    console.warn(`waitForPathReady: RTSP never connected for "${pathName}" — check NVR reachability/credentials/time range`)
     return { ready: false, stage: 'rtsp' }
   }
 
@@ -194,12 +194,12 @@ export const waitForPathReady = async (
 
     const muxer = await getHlsMuxer(pathName)
     if (muxer !== null) {
-      logger.debug(`waitForPathReady: HLS muxer active for "${pathName}"`)
+      console.debug(`waitForPathReady: HLS muxer active for "${pathName}"`)
       return { ready: true, stage: 'ok' }
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs))
   }
 
-  logger.warn(`waitForPathReady: HLS muxer never became active for "${pathName}" — check MediaMTX HLS config/reachability of MEDIAMTX_HLS_URL from this server`)
+  console.warn(`waitForPathReady: HLS muxer never became active for "${pathName}" — check MediaMTX HLS config/reachability of MEDIAMTX_HLS_URL from this server`)
   return { ready: false, stage: 'hls' }
 }

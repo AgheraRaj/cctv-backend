@@ -18,7 +18,7 @@
 import { HikvisionDownloadStrategy } from './strategies/hikvision.strategy.js'
 import { StrategyUnavailableError }  from './types.js'
 import type { DownloadContext, DownloadStrategy } from './types.js'
-import logger from '../../../utils/logger.js'
+
 import { HifocusDownloadStrategy } from './strategies/hifocus.strategy.js'
 import { RtspDownloadStrategy } from './strategies/rtsp.strategy.js'
 
@@ -48,13 +48,13 @@ export class DownloadService {
 
     for (const strategy of candidates) {
       try {
-        logger.info(`[download-service] trying strategy "${strategy.name}" for NVR ${nvr.id} (${nvr.type})`)
+        console.log(`[download-service] trying strategy "${strategy.name}" for NVR ${nvr.id} (${nvr.type})`)
         await strategy.download(ctx)
-        logger.info(`[download-service] strategy "${strategy.name}" succeeded`)
+        console.log(`[download-service] strategy "${strategy.name}" succeeded`)
         return
       } catch (err) {
         if (err instanceof StrategyUnavailableError) {
-          logger.warn(
+          console.warn(
             `[download-service] strategy "${strategy.name}" unavailable: ${err.message} — ` +
             `trying next strategy`
           )

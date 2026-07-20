@@ -8,7 +8,7 @@
 import { Worker, Job } from 'bullmq'
 import { connection, cameraStatusQueue } from '../../config/bullmq.js'
 import { runCameraStatusCheck } from './detection.service.js'
-import logger from '../../utils/logger.js'
+import { addAuditLog } from '../audit/audit.queue.js'
 import redis from '../../config/redis.js'
 import prisma from '../../config/db.js'
 
@@ -24,7 +24,7 @@ const REPEAT_KEY_HASH = 'camera-status:repeat-keys'
 export const startCameraStatusWorker = (): void => {
   if (worker) return
 
-  logger.info('Camera Status Worker started (always-on, independent of UI sessions)')
+  console.log('Camera Status Worker started (always-on, independent of UI sessions)')
 
   worker = new Worker(
     'camera-status-queue',
@@ -39,7 +39,13 @@ export const startCameraStatusWorker = (): void => {
   )
 
   worker.on('failed', (job, err) => {
-    logger.error(`[CameraStatus ${job?.id}] failed for NVR ${job?.data?.nvrId}: ${err.message}`)
+    console.error(`[CameraStatus ${job?.id}] failed for NVR ${job?.data?.nvrId}: ${err.message}`)
+    addAuditLog({
+      action: 'WORKER_JOB_FAILED',
+      resourceType: 'NVR',
+      resourceId: job?.data?.nvrId,
+      newValues: { jobId: job?.id, error: err.message },
+    })
   })
 }
 
@@ -47,7 +53,7 @@ export const stopCameraStatusWorker = async (): Promise<void> => {
   if (!worker) return
   await worker.close()
   worker = null
-  logger.info('Camera Status Worker stopped')
+  console.log('Camera Status Worker stopped')
 }
 
 // ─── Queue Management Helpers ─────────────────────────────
@@ -111,11 +117,11 @@ export const reconcileCameraStatusNVRs = async (): Promise<void> => {
     if (!currentlyActive.has(nvr.id)) {
       await addCameraStatusPolling(nvr.id)
       addedCount++
-      logger.warn(`NVR "${nvr.name}" (${nvr.id}) was not in the camera-status queue — added it now`)
+      console.warn(`NVR "${nvr.name}" (${nvr.id}) was not in the camera-status queue — added it now`)
     }
   }
 
-  logger.info(
+  console.log(
     `Camera status queue reconciliation complete: ${nvrs.length} total NVRs, ${addedCount} newly scheduled, ${nvrs.length - addedCount} already active`
   )
 }

@@ -34,7 +34,7 @@ import crypto from 'crypto'
 import { XMLParser } from 'fast-xml-parser'
 import { env } from '../../config/env.js'
 import { withRetry } from '../../utils/retry.js'
-import logger from '../../utils/logger.js'
+
 import type { RecordingSegment } from './hikvision.search.js'
 
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: true })
@@ -205,7 +205,7 @@ export const parseChlRecLogResponse = (xml: string, channel: number): RecordingS
 
   const status = parsed?.response?.status
   if (status !== 'success') {
-    logger.warn(`Hifocus queryChlRecLog: non-success status "${status}"`)
+    console.warn(`Hifocus queryChlRecLog: non-success status "${status}"`)
     return []
   }
 
@@ -290,7 +290,7 @@ export const fetchChlRecLog = async (
   // TEMP DEBUG — remove after confirming credentials are exactly right.
   // JSON.stringify reveals hidden whitespace/newlines that console.log alone
   // would hide (e.g. "admin2026\n" would just look like "admin2026").
-  logger.warn(`Hifocus login debug: username=${JSON.stringify(username)} password=${JSON.stringify(password)} passwordLength=${password.length}`)
+  console.warn(`Hifocus login debug: username=${JSON.stringify(username)} password=${JSON.stringify(password)} passwordLength=${password.length}`)
 
   const { sessionId, token } = await login(ip, httpPort, username, password)
   const body = buildQueryChlRecLogXML(token, channelId, startTime, endTime, tzOffsetMinutes)
@@ -306,7 +306,7 @@ export const fetchChlRecLog = async (
         return response.data
       } catch (err) {
         if (axios.isAxiosError(err) && err.response) {
-          logger.error(`Hifocus queryChlRecLog raw response: ${err.response.data}`)
+          console.error(`Hifocus queryChlRecLog raw response: ${err.response.data}`)
           if (err.response.status >= 400 && err.response.status < 500) {
             const nonRetryable = new Error(`Hifocus queryChlRecLog rejected (HTTP ${err.response.status})`)
             ;(nonRetryable as any).nonRetryable = true

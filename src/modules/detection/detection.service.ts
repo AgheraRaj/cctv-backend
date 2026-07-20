@@ -4,7 +4,7 @@ import { discoverHikvisionCameras } from './hikvision.discoverer.js'
 import { discoverHifocusCameras } from './hifocus.discoverer.js'
 import { isNvrHostReachable } from './nvr.heartbeat.js'
 import type { DiscoveredCamera } from './hikvision.discoverer.js'
-import logger from '../../utils/logger.js'
+
 import {
   emitNvrStatus,
   emitCameraStatus,
@@ -36,7 +36,7 @@ export const runNvrHeartbeat = async (nvrId: string): Promise<void> => {
   })
 
   if (!nvr) {
-    logger.warn(`Heartbeat skipped — NVR ${nvrId} not found in DB`)
+    console.warn(`Heartbeat skipped — NVR ${nvrId} not found in DB`)
     consecutiveFailures.delete(nvrId)
     return
   }
@@ -119,7 +119,7 @@ export const runCameraStatusCheck = async (nvrId: string): Promise<void> => {
   })
 
   if (!nvr) {
-    logger.warn(`Camera status check skipped — NVR ${nvrId} not found in DB`)
+    console.warn(`Camera status check skipped — NVR ${nvrId} not found in DB`)
     return
   }
 
@@ -141,7 +141,7 @@ export const runCameraStatusCheck = async (nvrId: string): Promise<void> => {
         ? await discoverHikvisionCameras(nvr.ip, nvr.httpPort, nvr.username, decryptedPassword)
         : await discoverHifocusCameras(nvr.ip, nvr.httpPort, nvr.username, decryptedPassword)
   } catch (err) {
-    logger.warn(
+    console.warn(
       `Camera status check failed for reachable NVR ${nvr.name} (${nvr.ip}) — ` +
         `leaving existing camera statuses unchanged this cycle: ${err instanceof Error ? err.message : String(err)}`
     )
@@ -188,7 +188,7 @@ const reconcileCameras = async (
         },
       })
 
-      logger.info(`New camera discovered on NVR ${nvrId} — channel ${channel}`)
+      console.log(`New camera discovered on NVR ${nvrId} — channel ${channel}`)
 
       emitCameraNew({
         camera: {
@@ -237,7 +237,7 @@ const reconcileCameras = async (
         },
       })
 
-      logger.info(`Camera channel ${channel} on NVR ${nvrId} went offline`)
+      console.log(`Camera channel ${channel} on NVR ${nvrId} went offline`)
 
       emitCameraStatus({
         cameraId: existing.id,

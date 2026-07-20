@@ -37,77 +37,82 @@ model Station {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  nvrs      NVR[]
+  nvrs NVR[]
+
   @@unique([name, city])
 }
 
 model NVR {
-  id           String    @id @default(cuid())
-  stationId    String
-  station      Station   @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  stationId String
+  station   Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
 
-  type         NVRType
-  name         String
-  ip           String
-  rtspPort     Int       @default(554)
-  httpPort     Int       @default(80)
-  username     String
-  password     String    // AES-256 encrypted
+  type     NVRType
+  name     String
+  ip       String
+  rtspPort Int     @default(554)
+  httpPort Int     @default(80)
+  username String
+  password String // AES-256 encrypted
 
   status       NVRStatus @default(OFFLINE)
   lastSeenAt   DateTime?
   offlineSince DateTime?
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  cameras      Camera[]
+  cameras Camera[]
 }
 
 model Camera {
-  id           String    @id @default(cuid())
-  nvrId        String
-  nvr          NVR       @relation(fields: [nvrId], references: [id], onDelete: Cascade)
+  id    String @id @default(cuid())
+  nvrId String
+  nvr   NVR    @relation(fields: [nvrId], references: [id], onDelete: Cascade)
 
-  channel      Int
-  name         String
-  areaTag      String?
-  isActive     Boolean   @default(true)
+  channel  Int
+  name     String
+  areaTag  String?
+  isActive Boolean @default(true)
 
   isOnline     Boolean   @default(false)
   lastSeenAt   DateTime?
   offlineSince DateTime?
   protocol     String?
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  recordings   Recording[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([nvrId, channel])
 }
 
-// Recording index — metadata only, no local files.
-// Actual footage lives on the NVR HDD. This table is a cache of what
-// the NVR has recorded, used to answer "what's available on date X?"
-// without making a live ONVIF/ISAPI query every time.
-model Recording {
-  id             String    @id @default(cuid())
-  cameraId       String
-  camera         Camera    @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+model AuditLog {
+  id           String  @id @default(cuid())
+  userId       String?
+  userEmail    String?
+  action       String
+  resourceType String
+  resourceId   String?
 
-  nvrId          String
-  channel        Int
+  oldValues Json?
+  newValues Json?
 
-  // ONVIF recording token (e.g. "Record_1_0") — used by GetReplayUri
-  recordingToken String?
+  ipAddress String?
+  userAgent String?
+  requestId String?
 
-  startTime      DateTime
-  endTime        DateTime?   // null while recording is ongoing
-  isOngoing      Boolean     @default(false)
+  // API Request Specific
+  userRole     String?
+  method       String?
+  route        String?
+  url          String?
+  statusCode   Int?
+  responseTime Int?
 
-  createdAt      DateTime    @default(now())
+  createdAt DateTime @default(now())
 
-  @@index([nvrId, channel, startTime, endTime])
-  @@index([startTime])
+  @@index([userId])
+  @@index([resourceType, resourceId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
 }

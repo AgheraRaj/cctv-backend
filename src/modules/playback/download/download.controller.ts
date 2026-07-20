@@ -10,7 +10,7 @@ import { AppError } from '../../../middleware/errorHandler.js'
 import prisma from '../../../config/db.js'
 import { decrypt } from '../../../utils/crypto.js'
 import { downloadService } from './download.service.js'
-import logger from '../../../utils/logger.js'
+
 
 const querySchema = z.object({
   nvrId:     z.string().min(1),
@@ -54,7 +54,7 @@ export const downloadRecording = async (
     const password = decrypt(nvr.password)
     const filename = buildFilename(nvr.name, channel, start)
 
-    logger.info(
+    console.log(
       `[download] ${nvr.type} nvrId=${nvrId} ch${channel} ` +
       `${startTime}→${endTime} (${durationSec}s) user=${req.user?.id}`
     )

@@ -15,7 +15,7 @@
 
 import type { NVR } from '@prisma/client'
 import type { DownloadContext, DownloadStrategy } from '../types.js'
-import logger from '../../../../utils/logger.js'
+
 import { RtspDownloadStrategy } from './rtsp.strategy.js'
 
 export class HifocusDownloadStrategy implements DownloadStrategy {
@@ -28,7 +28,7 @@ export class HifocusDownloadStrategy implements DownloadStrategy {
   }
 
   async download(ctx: DownloadContext): Promise<void> {
-    logger.info(
+    console.log(
       `[${this.name}] HiFocus has no native HTTP download API — using RTSP+ffmpeg. ` +
       `Note: download speed is limited to 1× real-time by the NVR's RTSP playback server.`
     )

@@ -21,7 +21,7 @@
 
 import axios from 'axios'
 import { XMLParser } from 'fast-xml-parser'
-import logger from '../../utils/logger.js'
+
 import { login, type HifocusSession } from '../playback/hifocus.reclog.js'
 
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: true })
@@ -53,7 +53,7 @@ export const parseRecStatusResponse = (xml: string): Map<number, boolean> => {
   const result = new Map<number, boolean>()
 
   if (status !== 'success') {
-    logger.warn(`Hifocus queryRecStatus: non-success status "${status}"`)
+    console.warn(`Hifocus queryRecStatus: non-success status "${status}"`)
     return result
   }
 

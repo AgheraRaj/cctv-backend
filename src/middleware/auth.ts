@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env.js'
 import { AppError } from './errorHandler.js'
+import { asyncLocalStorage } from './asyncContext.js'
 
 export interface AuthRequest extends Request {
   user?: {
@@ -36,6 +37,14 @@ export const authenticate = (
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET) as AuthRequest['user']
     req.user = decoded
+    
+    // Inject userId into current context
+    const store = asyncLocalStorage.getStore();
+    if (store && req.user) {
+      store.userId = req.user.id;
+      store.userEmail = req.user.email;
+    }
+    
     next()
   } catch {
     next(new AppError(401, 'Invalid or expired token.'))

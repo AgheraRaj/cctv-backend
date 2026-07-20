@@ -26,7 +26,7 @@
  */
 import http from "http";
 import crypto from "crypto";
-import logger from "../../utils/logger.js";
+
 import { searchHifocusRecordings, getRecordingTimeRange } from "./hifocus.search.js";
 
 // ── WS-Security envelope ──────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ const parseOffsetFromUrl = (
   const localDt = new Date(`${dateMatch[1]}T${timeMatch[1]}Z`); // parse as if UTC to get ms
   const offset = localDt.getTime() - recordingStartUtc.getTime();
 
-  logger.info(
+  console.log(
     `Hifocus timezone offset: ${offset / 1000}s (${offset / 3600000}h)`,
   );
   return offset; // milliseconds
@@ -230,13 +230,13 @@ export const getHifocusReplayInfo = async (
         token = segment.token;
       }
     } else {
-      logger.warn(`Hifocus GetReplayUri: No segments found for ${startTimeUtc.toISOString()}, using fallback token`);
+      console.warn(`Hifocus GetReplayUri: No segments found for ${startTimeUtc.toISOString()}, using fallback token`);
     }
   } catch (err) {
-    logger.warn(`Hifocus GetReplayUri: search failed, using fallback token: ${String(err)}`);
+    console.warn(`Hifocus GetReplayUri: search failed, using fallback token: ${String(err)}`);
   }
 
-  logger.info(`Hifocus GetReplayUri: ${ip}:${httpPort} token="${token}"`);
+  console.log(`Hifocus GetReplayUri: ${ip}:${httpPort} token="${token}"`);
 
   const body =
     '<GetReplayUri xmlns="http://www.onvif.org/ver10/replay/wsdl">' +
@@ -255,7 +255,7 @@ export const getHifocusReplayInfo = async (
   );
 
    if (result.status !== 200) {
-    logger.error(`Hifocus GetReplayUri full fault body: ${result.body}`)
+    console.error(`Hifocus GetReplayUri full fault body: ${result.body}`)
     throw new Error(
       `GetReplayUri returned HTTP ${result.status}: ${result.body.slice(0, 200)}`,
     );
@@ -268,7 +268,7 @@ export const getHifocusReplayInfo = async (
     );
   }
 
-  logger.info(`Hifocus raw replay URI: ${rawUri}`);
+  console.log(`Hifocus raw replay URI: ${rawUri}`);
 
   // ── NVR timezone offset ──────────────────────────────────────────────────
   // Reuse a cached, previously-calibrated offset if we have a fresh one for
@@ -298,19 +298,19 @@ export const getHifocusReplayInfo = async (
       if (earliestRecording && !isNaN(earliestRecording.getTime())) {
         anchor = earliestRecording;
       } else {
-        logger.warn(
+        console.warn(
           `Hifocus tz calibration: no earliestRecording for token "${token}", falling back to requested startTime (offset may be wrong for seeks)`,
         );
       }
     } catch (err) {
-      logger.warn(
+      console.warn(
         `Hifocus tz calibration: getRecordingTimeRange failed, falling back to requested startTime: ${String(err)}`,
       );
     }
 
     tzOffsetMs = parseOffsetFromUrl(rawUri, anchor);
     tzOffsetCache.set(cacheKey, { offsetMs: tzOffsetMs, expiresAt: Date.now() + TZ_OFFSET_CACHE_TTL_MS });
-    logger.info(`Hifocus tz offset calibrated for ${cacheKey}: ${tzOffsetMs / 3600000}h (cached ${TZ_OFFSET_CACHE_TTL_MS / 3600000}h)`);
+    console.log(`Hifocus tz offset calibrated for ${cacheKey}: ${tzOffsetMs / 3600000}h (cached ${TZ_OFFSET_CACHE_TTL_MS / 3600000}h)`);
   }
 
   // Build the actual URL for the requested time range using the offset
@@ -325,7 +325,7 @@ export const getHifocusReplayInfo = async (
     tzOffsetMs,
   );
 
-  logger.info(
+  console.log(
     `Hifocus playback URL: ${rtspUrl.replace(/:([^@/]+)@/, ":***@")}`,
   );
 

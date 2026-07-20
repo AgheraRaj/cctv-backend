@@ -21,7 +21,7 @@ import crypto from 'crypto'
 import type { NVR } from '@prisma/client'
 import { StrategyUnavailableError, type DownloadContext, type DownloadStrategy } from '../types.js'
 import { searchHikvisionRecordings } from '../../hikvision.search.js'
-import logger from '../../../../utils/logger.js'
+
 
 // ── Digest Auth helpers (unchanged) ─────────────────────────────────────────
 
@@ -121,7 +121,7 @@ export class HikvisionDownloadStrategy implements DownloadStrategy {
   async download(ctx: DownloadContext): Promise<void> {
     const { nvr, password, channel, start, end, filename, req, res } = ctx
 
-    logger.info(`[${this.name}] starting — ch${channel} ${start.toISOString()}→${end.toISOString()} ${nvr.ip}`)
+    console.log(`[${this.name}] starting — ch${channel} ${start.toISOString()}→${end.toISOString()} ${nvr.ip}`)
 
     // ── Step 0: search for the exact segment covering the requested window ──
     const segments = await searchHikvisionRecordings(
@@ -222,7 +222,7 @@ export class HikvisionDownloadStrategy implements DownloadStrategy {
             const cl = nvrRes.headers['content-length']
             if (cl) {
               res.setHeader('Content-Length', cl)
-              logger.info(`[${this.name}] Content-Length: ${cl} bytes`)
+              console.log(`[${this.name}] Content-Length: ${cl} bytes`)
             }
           }
 
@@ -236,12 +236,12 @@ export class HikvisionDownloadStrategy implements DownloadStrategy {
 
           nvrRes.on('end', () => {
             if (!res.writableEnded) res.end()
-            logger.info(`[${this.name}] complete: ${filename}`)
+            console.log(`[${this.name}] complete: ${filename}`)
             resolve()
           })
 
           nvrRes.on('error', (err) => {
-            logger.error(`[${this.name}] NVR stream error: ${err.message}`)
+            console.error(`[${this.name}] NVR stream error: ${err.message}`)
             if (!res.writableEnded) res.end()
             reject(err)
           })
@@ -253,7 +253,7 @@ export class HikvisionDownloadStrategy implements DownloadStrategy {
       })
 
       nvrReq.on('error', (err) => {
-        logger.error(`[${this.name}] request error: ${err.message}`)
+        console.error(`[${this.name}] request error: ${err.message}`)
         reject(new StrategyUnavailableError(`ISAPI network error on ${nvr.ip}: ${err.message}`))
       })
 

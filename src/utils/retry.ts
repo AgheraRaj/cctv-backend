@@ -10,7 +10,7 @@
  * explicit about which failures are transient (network/5xx) vs. terminal
  * (auth/4xx/malformed response), per Phase 4/5's error-handling design.
  */
-import logger from './logger.js'
+
 
 export interface RetryOptions {
   retries: number
@@ -35,7 +35,7 @@ export const withRetry = async <T>(
         throw err
       }
       const delay = baseDelayMs * Math.pow(2, attempt)
-      logger.warn(
+      console.warn(
         `${label} failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay}ms: ${String(err)}`
       )
       await new Promise((r) => setTimeout(r, delay))

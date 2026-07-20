@@ -5,7 +5,7 @@ import { decrypt } from '../../utils/crypto.js'
 import { generatePlaybackRTSP } from './playback.generator.js'
 import { getHifocusReplayInfo } from './hifocus.replay.js'
 import { env } from '../../config/env.js'
-import logger from '../../utils/logger.js'
+
 
 // ── Single-flight per NVR+channel ─────────────────────────────────────────────
 // Approach A (ffmpeg-per-request) has no in-place seek — a timeline click on
@@ -156,7 +156,7 @@ export async function streamRecording(req: Request, res: Response): Promise<void
       res.status(400).json({ error: `Unsupported NVR type: ${nvr.type}` }); return
     }
   } catch (err) {
-    logger.error('[streamRecording] Failed to build RTSP URL:', err)
+    console.error('[streamRecording] Failed to build RTSP URL:', err)
     res.status(502).json({ error: 'Failed to get recording URL from NVR' })
     return
   }
@@ -170,7 +170,7 @@ export async function streamRecording(req: Request, res: Response): Promise<void
   const needsTranscode = codec === 'hevc' || codec === 'h265'
 
   if (codec === null) {
-    logger.warn(`[streamRecording] could not determine codec for ${nvrId} ch${channelNo} — defaulting to H.264 transcode for browser safety`)
+    console.warn(`[streamRecording] could not determine codec for ${nvrId} ch${channelNo} — defaulting to H.264 transcode for browser safety`)
   }
 
   const videoArgs = (needsTranscode || codec === null)
@@ -201,7 +201,7 @@ export async function streamRecording(req: Request, res: Response): Promise<void
 if (!isDownload) {
   const existing = activeStreams.get(key)
   if (existing) {
-    logger.info(`[streamRecording] superseding in-flight stream for ${key}`)
+    console.log(`[streamRecording] superseding in-flight stream for ${key}`)
     existing.kill()
     await new Promise((r) => setTimeout(r, env.PLAYBACK_NVR_SLOT_RELEASE_MS))
   }
@@ -211,7 +211,7 @@ if (!isDownload) {
   const playbackKey = streamKey(nvrId, channelNo)
   const existingPlayback = activeStreams.get(playbackKey)
   if (existingPlayback) {
-    logger.info(`[streamRecording] killing playback stream before download for ${playbackKey}`)
+    console.log(`[streamRecording] killing playback stream before download for ${playbackKey}`)
     existingPlayback.kill()
     await new Promise((r) => setTimeout(r, env.PLAYBACK_NVR_SLOT_RELEASE_MS))
   }
@@ -277,7 +277,7 @@ if (!isDownload) {
   let wroteAnyData = false
   const firstByteTimeout = setTimeout(() => {
     if (!wroteAnyData && !res.writableEnded) {
-      logger.warn(`[streamRecording] no data from ffmpeg within 12s for ${nvrId} ch${channelNo} — likely no recording in range or a stuck NVR playback slot`)
+      console.warn(`[streamRecording] no data from ffmpeg within 12s for ${nvrId} ch${channelNo} — likely no recording in range or a stuck NVR playback slot`)
       killFfmpeg()
       if (!res.headersSent) {
         res.status(502).json({ error: 'No video data received from NVR for the requested time range.' })
@@ -299,7 +299,7 @@ if (!isDownload) {
     // ffmpeg echoes the full RTSP URL (including plaintext credentials) into
     // its own error messages — strip that before it hits the logs.
     const redacted = data.toString().trim().replace(/rtsp:\/\/[^@]+@/g, 'rtsp://***:***@')
-    logger.debug(`[ffmpeg] ${redacted}`)
+    console.debug(`[ffmpeg] ${redacted}`)
   })
 
   req.on('close', killFfmpeg)
@@ -307,14 +307,14 @@ if (!isDownload) {
   ffmpeg.on('close', (code) => {
     releaseIfCurrent()
     if (code !== 0 && code !== null) {
-      logger.warn(`[ffmpeg] exited with code ${code} for ${nvrId} ch${channelNo}`)
+      console.warn(`[ffmpeg] exited with code ${code} for ${nvrId} ch${channelNo}`)
     }
     if (!res.writableEnded) res.end()
   })
 
   ffmpeg.on('error', (err) => {
     releaseIfCurrent()
-    logger.error('[ffmpeg] spawn error:', err)
+    console.error('[ffmpeg] spawn error:', err)
     if (!res.headersSent) {
       res.status(500).json({ error: 'ffmpeg failed to start' })
     } else {

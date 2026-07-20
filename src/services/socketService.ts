@@ -1,6 +1,6 @@
 import { Server as HttpServer } from 'http'
 import { Server as SocketServer } from 'socket.io'
-import logger from '../utils/logger.js'
+
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -42,14 +42,14 @@ export const initSocketService = (httpServer: HttpServer): SocketServer => {
   })
 
   io.on('connection', (socket) => {
-    logger.info(`Socket connected: ${socket.id}`)
+    console.log(`Socket connected: ${socket.id}`)
 
     socket.on('disconnect', () => {
-      logger.info(`Socket disconnected: ${socket.id}`)
+      console.log(`Socket disconnected: ${socket.id}`)
     })
   })
 
-  logger.info('Socket.io initialized')
+  console.log('Socket.io initialized')
   return io
 }
 

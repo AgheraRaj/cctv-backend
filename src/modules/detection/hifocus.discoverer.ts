@@ -13,7 +13,7 @@ import { DiscoveredCamera } from './hikvision.discoverer.js'
 import { login } from '../playback/hifocus.reclog.js'
 import { fetchNodeList, parseNodeListResponse } from './hifocus.nodelist.js'
 import { fetchRecStatus, parseRecStatusResponse } from './hifocus.recstatus.js'
-import logger from '../../utils/logger.js'
+
 
 export const discoverHifocusCameras = async (
   ip: string,
@@ -25,7 +25,7 @@ export const discoverHifocusCameras = async (
 
   const channels = parseNodeListResponse(await fetchNodeList(ip, httpPort, session))
   if (channels.length === 0) {
-    logger.warn(`Hifocus queryNodeList returned no channels for NVR ${ip}`)
+    console.warn(`Hifocus queryNodeList returned no channels for NVR ${ip}`)
     return null
   }
 
@@ -37,7 +37,7 @@ export const discoverHifocusCameras = async (
   try {
     liveStatus = parseRecStatusResponse(await fetchRecStatus(ip, httpPort, session))
   } catch (err) {
-    logger.warn(`Failed to fetch live channel status for Hi-Focus NVR ${ip}, defaulting all discovered channels to online: ${err instanceof Error ? err.message : String(err)}`)
+    console.warn(`Failed to fetch live channel status for Hi-Focus NVR ${ip}, defaulting all discovered channels to online: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   return channels.map(({ channel }) => ({

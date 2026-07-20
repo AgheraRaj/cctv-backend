@@ -6,8 +6,11 @@ import rateLimit from 'express-rate-limit'
 import { env } from './config/env.js'
 import redis from './config/redis.js'
 import { errorHandler } from './middleware/errorHandler.js'
-import logger from './utils/logger.js'
+
 import { initSocketService } from './services/socketService.js'
+import { requestContextMiddleware } from './middleware/asyncContext.js'
+import { apiLoggerMiddleware } from './middleware/apiLogger.js'
+import { addAuditLog } from './modules/audit/audit.queue.js'
 
 // ─── Route Imports ─────────────────────────────────────────────────
 import authRoutes from './modules/auth/auth.routes.js'
@@ -17,6 +20,7 @@ import streamRoutes from './modules/streams/streams.routes.js'
 import detectionRoutes from './modules/detection/detection.routes.js'
 import detectionGlobalRoutes from './modules/detection/detection.global.routes.js'
 import playbackRoutes from './modules/playback/playback.routes.js'
+import auditRoutes from './modules/audit/audit.routes.js'
 
 // ─── Worker Imports ────────────────────────────────────────────────
 // Two independent always-on workers. Neither is started, stopped, or
@@ -31,6 +35,7 @@ import {
   stopCameraStatusWorker,
   reconcileCameraStatusNVRs,
 } from './modules/detection/camera-status.worker.js'
+import { startAuditWorker, stopAuditWorker } from './modules/audit/audit.worker.js'
 
 const app = express()
 
@@ -53,16 +58,11 @@ app.use('/api', limiter)
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
-// ─── Request Logger ────────────────────────────────────────────────
-app.use((req, _res, next) => {
-  logger.info({
-    message: 'Incoming request',
-    method: req.method,
-    path: req.path,
-    ip: req.ip,
-  })
-  next()
-})
+// ─── Request Context ───────────────────────────────────────────────
+app.use(requestContextMiddleware)
+
+// ─── API Logger ────────────────────────────────────────────────────
+app.use('/api', apiLoggerMiddleware)
 
 // ─── Health Check ──────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -77,6 +77,7 @@ app.use('/api/nvrs/:nvrId/detection', detectionRoutes)
 app.use('/api/streams', streamRoutes)
 app.use('/api/detection', detectionGlobalRoutes)
 app.use('/api/playback', playbackRoutes)
+app.use('/api/audit-logs', auditRoutes)
 
 // ─── Global Error Handler (must be last) ───────────────────────────
 app.use(errorHandler)
@@ -95,6 +96,7 @@ const start = async () => {
   // browser tab open.
   startNvrHeartbeatWorker()
   startCameraStatusWorker()
+  startAuditWorker()
 
   // Ensure every NVR already in the database is actually being polled
   // by both queues — without this, NVRs that existed before auto-start
@@ -113,10 +115,10 @@ const start = async () => {
 // BullMQ locks are released on redeploy/restart, instead of leaving
 // stalled jobs that wait out the ~30s stall timeout before recovery.
 const shutdown = async (signal: string) => {
-  logger.info(`${signal} received — shutting down gracefully`)
-  await Promise.all([stopNvrHeartbeatWorker(), stopCameraStatusWorker()])
+  console.log(`${signal} received — shutting down gracefully`)
+  await Promise.all([stopNvrHeartbeatWorker(), stopCameraStatusWorker(), stopAuditWorker()])
   httpServer?.close(() => {
-    logger.info('HTTP server closed')
+    console.log('HTTP server closed')
     process.exit(0)
   })
 }
@@ -124,4 +126,27 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
 
-start()
+// ─── Unhandled Errors ──────────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  const stack = reason instanceof Error ? reason.stack : undefined
+  console.error(`Unhandled Promise Rejection: ${message}`, { stack })
+  addAuditLog({
+    action: 'SYSTEM_UNHANDLED_REJECTION',
+    resourceType: 'PROCESS',
+    newValues: { message, stack },
+  })
+})
+
+process.on('uncaughtException', (err) => {
+  console.error(`Uncaught Exception: ${err.message}`, { stack: err.stack })
+  addAuditLog({
+    action: 'SYSTEM_UNCAUGHT_EXCEPTION',
+    resourceType: 'PROCESS',
+    newValues: { message: err.message, stack: err.stack },
+  })
+  // Exit after uncaught exceptions — process is in an undefined state
+  process.exit(1)
+})
+
+start()

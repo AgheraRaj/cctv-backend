@@ -25,7 +25,7 @@ import type { PlaybackSession, PlaybackState } from './playback-session-manager.
 import { getAdapter } from './adapters/index.js'
 import type { AdapterNVR, NVRType } from './adapters/index.js'
 import type { RecordingSegment } from './hikvision.search.js'
-import logger from '../../utils/logger.js'
+
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -172,7 +172,7 @@ export const createPlaybackSession = async (
   // on the same channel (avoids ISAPI/ONVIF 453-style rejections).
   const existing = await sessionManager.getActiveSession(nvrId, channel)
   if (existing) {
-    logger.info(`Channel ${nvrId}:${channel} already has session ${existing.sessionId} — evicting`)
+    console.log(`Channel ${nvrId}:${channel} already has session ${existing.sessionId} — evicting`)
     await stopSession(existing.sessionId)
   }
 
@@ -277,14 +277,14 @@ export const getSessionState = async (sessionId: string): Promise<SessionState> 
     return toSessionState(session)
   }
 
-  logger.warn(`Session ${sessionId}: path "${session.mediamtxPathName}" unhealthy — attempting recovery`)
+  console.warn(`Session ${sessionId}: path "${session.mediamtxPathName}" unhealthy — attempting recovery`)
 
   try {
     await reseekTo(session, session.currentPositionMs)
     const recovered = await sessionManager.getSessionOrThrow(sessionId)
     return toSessionState(recovered)
   } catch (err) {
-    logger.error(`Session ${sessionId}: recovery failed, deleting session: ${String(err)}`)
+    console.error(`Session ${sessionId}: recovery failed, deleting session: ${String(err)}`)
     await sessionManager.stop(sessionId, session.nvrId, session.channel)
     throw new AppError(404, `Session ${sessionId} could not be recovered and has been closed.`)
   }
@@ -383,6 +383,6 @@ export const cleanupOrphanedSessions = async (): Promise<void> => {
     const activePathNames = await sessionManager.getAllActivePathNames()
     await mediaGateway.reconcileOrphans(activePathNames)
   } catch (err) {
-    logger.error('Orphaned session cleanup error:', err)
+    console.error('Orphaned session cleanup error:', err)
   }
 }

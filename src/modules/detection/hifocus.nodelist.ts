@@ -15,7 +15,7 @@
 
 import axios from 'axios'
 import { XMLParser } from 'fast-xml-parser'
-import logger from '../../utils/logger.js'
+
 import type { HifocusSession } from '../playback/hifocus.reclog.js'
 
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: true })
@@ -73,7 +73,7 @@ export const parseNodeListResponse = (xml: string): HifocusChannelInfo[] => {
   const parsed = parser.parse(xml)
   const status = parsed?.response?.status
   if (status !== 'success') {
-    logger.warn(`Hifocus queryNodeList: non-success status "${status}"`)
+    console.warn(`Hifocus queryNodeList: non-success status "${status}"`)
     return []
   }
 

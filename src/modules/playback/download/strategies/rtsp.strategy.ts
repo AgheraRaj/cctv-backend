@@ -29,7 +29,7 @@ import { generatePlaybackRTSP } from '../../playback.generator.js'
 import { getHifocusReplayInfo } from '../../hifocus.replay.js'
 import { activeStreams, streamKey } from '../../playback.stream.js'
 import { env } from '../../../../config/env.js'
-import logger from '../../../../utils/logger.js'
+
 import type { DownloadContext, DownloadStrategy } from '../types.js'
 
 export class RtspDownloadStrategy implements DownloadStrategy {
@@ -45,7 +45,7 @@ export class RtspDownloadStrategy implements DownloadStrategy {
 
     const durationSec = Math.round((end.getTime() - start.getTime()) / 1000)
 
-    logger.info(
+    console.log(
       `[${this.name}] starting — ${nvr.type} ch${channel} ` +
       `${start.toISOString()}→${end.toISOString()} (${durationSec}s)`
     )
@@ -74,7 +74,7 @@ export class RtspDownloadStrategy implements DownloadStrategy {
     const key = streamKey(nvr.id, channel)
     const existingPlayback = activeStreams.get(key)
     if (existingPlayback) {
-      logger.info(`[${this.name}] killing active playback stream for ${key} before download`)
+      console.log(`[${this.name}] killing active playback stream for ${key} before download`)
       existingPlayback.kill()
       await new Promise((r) => setTimeout(r, env.PLAYBACK_NVR_SLOT_RELEASE_MS))
     }
@@ -105,7 +105,7 @@ export class RtspDownloadStrategy implements DownloadStrategy {
     }
 
     req.on('close', () => {
-      logger.info(`[${this.name}] client cancelled: ${filename}`)
+      console.log(`[${this.name}] client cancelled: ${filename}`)
       killFfmpeg()
     })
 
@@ -119,22 +119,22 @@ export class RtspDownloadStrategy implements DownloadStrategy {
 
     ffmpeg.stderr.on('data', (data: Buffer) => {
       const redacted = data.toString().trim().replace(/rtsp:\/\/[^@]+@/g, 'rtsp://***:***@')
-      logger.debug(`[${this.name}:ffmpeg] ${redacted}`)
+      console.debug(`[${this.name}:ffmpeg] ${redacted}`)
     })
 
     await new Promise<void>((resolve, reject) => {
       ffmpeg.on('close', (code) => {
         if (code !== 0 && code !== null) {
-          logger.warn(`[${this.name}] ffmpeg exited ${code} for ${filename}`)
+          console.warn(`[${this.name}] ffmpeg exited ${code} for ${filename}`)
         } else {
-          logger.info(`[${this.name}] complete: ${filename}`)
+          console.log(`[${this.name}] complete: ${filename}`)
         }
         if (!res.writableEnded) res.end()
         resolve()
       })
 
       ffmpeg.on('error', (err) => {
-        logger.error(`[${this.name}] ffmpeg spawn error: ${err.message}`)
+        console.error(`[${this.name}] ffmpeg spawn error: ${err.message}`)
         if (!res.headersSent) {
           res.status(500).json({ error: 'ffmpeg failed to start.' })
         } else {

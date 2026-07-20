@@ -9,7 +9,7 @@
 import { Worker, Job } from 'bullmq'
 import { connection, nvrHeartbeatQueue } from '../../config/bullmq.js'
 import { runNvrHeartbeat } from './detection.service.js'
-import logger from '../../utils/logger.js'
+import { addAuditLog } from '../audit/audit.queue.js'
 import redis from '../../config/redis.js'
 import prisma from '../../config/db.js'
 
@@ -25,7 +25,7 @@ const REPEAT_KEY_HASH = 'heartbeat:repeat-keys'
 export const startNvrHeartbeatWorker = (): void => {
   if (worker) return
 
-  logger.info('NVR Heartbeat Worker started (always-on, independent of UI sessions)')
+  console.log('NVR Heartbeat Worker started (always-on, independent of UI sessions)')
 
   worker = new Worker(
     'nvr-heartbeat-queue',
@@ -40,7 +40,13 @@ export const startNvrHeartbeatWorker = (): void => {
   )
 
   worker.on('failed', (job, err) => {
-    logger.error(`[Heartbeat ${job?.id}] failed for NVR ${job?.data?.nvrId}: ${err.message}`)
+    console.error(`[Heartbeat ${job?.id}] failed for NVR ${job?.data?.nvrId}: ${err.message}`)
+    addAuditLog({
+      action: 'WORKER_JOB_FAILED',
+      resourceType: 'NVR',
+      resourceId: job?.data?.nvrId,
+      newValues: { jobId: job?.id, error: err.message },
+    })
   })
 }
 
@@ -48,7 +54,7 @@ export const stopNvrHeartbeatWorker = async (): Promise<void> => {
   if (!worker) return
   await worker.close()
   worker = null
-  logger.info('NVR Heartbeat Worker stopped')
+  console.log('NVR Heartbeat Worker stopped')
 }
 
 // ─── Queue Management Helpers ─────────────────────────────
@@ -114,11 +120,11 @@ export const reconcileHeartbeatNVRs = async (): Promise<void> => {
     if (!currentlyActive.has(nvr.id)) {
       await addNvrHeartbeat(nvr.id)
       addedCount++
-      logger.warn(`NVR "${nvr.name}" (${nvr.id}) was not in the heartbeat queue — added it now`)
+      console.warn(`NVR "${nvr.name}" (${nvr.id}) was not in the heartbeat queue — added it now`)
     }
   }
 
-  logger.info(
+  console.log(
     `Heartbeat queue reconciliation complete: ${nvrs.length} total NVRs, ${addedCount} newly scheduled, ${nvrs.length - addedCount} already active`
   )
 }

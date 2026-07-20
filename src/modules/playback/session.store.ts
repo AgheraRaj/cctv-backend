@@ -20,7 +20,7 @@
  */
 import { randomUUID } from 'crypto'
 import redis from '../../config/redis.js'
-import logger from '../../utils/logger.js'
+
 
 const SESSION_PREFIX = 'playback:session:'
 const CHANNEL_PREFIX = 'playback:channel:'
@@ -118,7 +118,7 @@ export const createSession = async (
   pipeline.setex(channelKey(data.nvrId, data.channel), SESSION_TTL_SECONDS, sessionId)
   await pipeline.exec()
 
-  logger.info(`Playback session created: ${sessionId} (${data.nvrId} ch${data.channel})`)
+  console.log(`Playback session created: ${sessionId} (${data.nvrId} ch${data.channel})`)
   return session
 }
 
@@ -175,7 +175,7 @@ export const deleteSession = async (sessionId: string, nvrId?: string, channel?:
   }
   await pipeline.exec()
 
-  logger.info(`Playback session deleted: ${sessionId}`)
+  console.log(`Playback session deleted: ${sessionId}`)
 }
 
 /**

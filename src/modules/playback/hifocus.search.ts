@@ -23,7 +23,7 @@ import {
   withTimeout,
   mapWithConcurrency,
 } from "../../utils/retry.js";
-import logger from "../../utils/logger.js";
+
 import type { RecordingSegment } from "./hikvision.search.js";
 
 const require = createRequire(import.meta.url);
@@ -42,7 +42,7 @@ const connectToNVR = (
     // many HiFocus NVRs. The cam object is fully usable even when this fails.
     new Cam({ hostname, username, password, port }, function (this: Cam, err) {
       if (err) {
-        logger.warn(
+        console.warn(
           `Hifocus ${hostname}: connect warning (non-fatal): ${String(err)}`,
         );
       }
@@ -94,7 +94,7 @@ const withCam = async <T>(
   try {
     return await fn(cam);
   } catch (err) {
-    logger.warn(`Hifocus ${ip}: cached ONVIF connection failed, reconnecting: ${String(err)}`);
+    console.warn(`Hifocus ${ip}: cached ONVIF connection failed, reconnecting: ${String(err)}`);
     invalidateCam(ip, httpPort);
     const freshCam = await getOrConnectCam(ip, username, password, httpPort);
     return fn(freshCam);
@@ -130,7 +130,7 @@ const getRecordingSummary = (
       label: "Hifocus GetRecordingSummary",
     },
   ).catch((err) => {
-    logger.debug(
+    console.debug(
       `Hifocus GetRecordingSummary failed after retries: ${String(err)}`,
     );
     return null;
@@ -186,7 +186,7 @@ const getRecordingInformation = (
       },
       (err: Error | null, data: any) => {
         if (err) {
-          logger.warn(
+          console.warn(
             `Hifocus GetRecordingInformation failed for "${recordingToken}": ${String(err)}`,
           );
           resolve(null);
@@ -198,7 +198,7 @@ const getRecordingInformation = (
               ?.recordingInformation;
           resolve(info ?? null);
         } catch (parseErr) {
-          logger.warn(
+          console.warn(
             `Hifocus GetRecordingInformation parse error for "${recordingToken}": ${String(parseErr)}`,
           );
           resolve(null);
@@ -212,7 +212,7 @@ const getRecordingInformation = (
     env.PLAYBACK_RECORDING_INFO_TIMEOUT_MS,
     `GetRecordingInformation(${recordingToken})`,
   ).catch((err) => {
-    logger.warn(
+    console.warn(
       `Hifocus GetRecordingInformation timed out for "${recordingToken}": ${String(err)}`,
     );
     return null;
@@ -267,14 +267,14 @@ const buildTokenCache = async (
     const summaryUntil = summary ? toDate(summary.dataUntil) : null;
 
     if (summary) {
-      logger.info(
+      console.log(
         `Hifocus ${ip}: ${summary.numberRecordings} recording(s), ` +
           `${summaryFrom?.toISOString()} → ${summaryUntil?.toISOString()}`,
       );
     }
 
     const allRecordings = await getRecordings(cam);
-    logger.info(`Hifocus ${ip}: ${allRecordings.length} total recording token(s)`);
+    console.log(`Hifocus ${ip}: ${allRecordings.length} total recording token(s)`);
 
     const videoSourceTokens = Object.keys((cam as any).videoSources || {});
 
@@ -368,7 +368,7 @@ export const getRecordingTimeRange = async (
   // Token not in cache (rare — e.g. a brand-new recording block that started
   // after the cache was built). Falls back to a single direct lookup rather
   // than forcing a full cache rebuild — still benefits from the warm cam cache.
-  logger.debug(`Hifocus ${ip}: token "${token}" not in cache, doing a direct lookup`);
+  console.debug(`Hifocus ${ip}: token "${token}" not in cache, doing a direct lookup`);
   return withCam(ip, httpPort, username, password, async (cam) => {
     const info = await getRecordingInformation(cam, token);
     return { earliestRecording: toDate(info?.earliestRecording), latestRecording: toDate(info?.latestRecording) };
@@ -389,7 +389,7 @@ export const searchHifocusRecordings = async (
   startTime: Date,
   endTime: Date,
 ): Promise<RecordingSegment[]> => {
-  logger.info(
+  console.log(
     `Hifocus search: http://${ip}:${httpPort} ch${channel} ` +
       `range=${startTime.toISOString()}→${endTime.toISOString()}`,
   );
@@ -397,13 +397,13 @@ export const searchHifocusRecordings = async (
   const { tokens, summaryFrom, summaryUntil } = await getHifocusTokens(ip, httpPort, username, password);
 
   if (summaryFrom && summaryUntil && (endTime < summaryFrom || startTime > summaryUntil)) {
-    logger.info(`Hifocus ${ip}: query range is outside available recordings`);
+    console.log(`Hifocus ${ip}: query range is outside available recordings`);
     return [];
   }
 
   const channelTokens = tokens.filter((t) => t.channel === channel);
   if (channelTokens.length === 0) {
-    logger.info(`Hifocus ${ip}: no recordings found for channel ${channel}`);
+    console.log(`Hifocus ${ip}: no recordings found for channel ${channel}`);
     return [];
   }
 
@@ -414,7 +414,7 @@ export const searchHifocusRecordings = async (
     const recEnd = latestRecording ?? summaryUntil;
 
     if (!recStart || !recEnd) {
-      logger.warn(`Hifocus ${ip}: no time range for token "${token}" — skipping`);
+      console.warn(`Hifocus ${ip}: no time range for token "${token}" — skipping`);
       continue;
     }
 
@@ -423,12 +423,12 @@ export const searchHifocusRecordings = async (
     const clippedStart = recStart < startTime ? startTime : recStart;
     const clippedEnd = recEnd > endTime ? endTime : recEnd;
 
-    logger.info(
+    console.log(
       `Hifocus ${ip}: matched token "${token}" → ${clippedStart.toISOString()}→${clippedEnd.toISOString()}`,
     );
     segments.push({ channel, startTime: clippedStart, endTime: clippedEnd, token });
   }
 
-  logger.info(`Hifocus ${ip} ch${channel}: returning ${segments.length} segment(s)`);
+  console.log(`Hifocus ${ip} ch${channel}: returning ${segments.length} segment(s)`);
   return segments;
 };

@@ -4,7 +4,7 @@ import axios from "axios";
 import { XMLParser } from "fast-xml-parser";
 import { env } from "../../config/env.js";
 import { withRetry } from "../../utils/retry.js";
-import logger from "../../utils/logger.js";
+
 
 export interface RecordingSegment {
   startTime: Date;
@@ -51,7 +51,7 @@ const searchPage = async (
   searchResultPosition: number
 ): Promise<{ items: any[]; isEnd: boolean; numOfMatches: number }> => {
   const xmlBody = buildSearchXML(channel, startTime, endTime, searchResultPosition);
-  logger.debug(`Hikvision search page: pos=${searchResultPosition} ch=${channel}`);
+  console.debug(`Hikvision search page: pos=${searchResultPosition} ch=${channel}`);
 
   const responseData = await withRetry(
     async () => {
@@ -66,7 +66,7 @@ const searchPage = async (
         return response.data;
       } catch (err) {
         if (axios.isAxiosError(err) && err.response) {
-          logger.error(`Hikvision search raw response: ${err.response.data}`);
+          console.error(`Hikvision search raw response: ${err.response.data}`);
           // 4xx (auth/bad request) — not retry-worthy, rethrow a tagged error.
           if (err.response.status >= 400 && err.response.status < 500) {
             const nonRetryable = new Error(`Hikvision search rejected (HTTP ${err.response.status})`);
@@ -125,7 +125,7 @@ export const searchHikvisionRecordings = async (
   }
 
   if (allItems.length >= PAGE_SIZE * 50) {
-    logger.warn(`Hikvision search for ch${channel} hit the pagination safety cap — results may be incomplete.`);
+    console.warn(`Hikvision search for ch${channel} hit the pagination safety cap — results may be incomplete.`);
   }
 
   return allItems

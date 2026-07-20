@@ -28,7 +28,7 @@
  *      └─────────┘
  */
 import { AppError } from '../../middleware/errorHandler.js'
-import logger from '../../utils/logger.js'
+
 import {
   createSession as storeCreateSession,
   getSession as storeGetSession,
@@ -144,4 +144,4 @@ export const getAllActivePathNames = async (): Promise<string[]> => {
   return sessions.map((s) => s.mediamtxPathName)
 }
 
-logger.debug('PlaybackSessionManager initialized')
+console.debug('PlaybackSessionManager initialized')
