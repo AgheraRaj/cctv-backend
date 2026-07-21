@@ -17,6 +17,10 @@ export const loginService = async (email: string, password: string) => {
     throw new AppError(401, 'Invalid email or password.')
   }
 
+  if (!user.isActive) {
+    throw new AppError(403, 'Account has been disabled. Contact your administrator.')
+  }
+
   const token = jwt.sign(
   { id: user.id, email: user.email, role: user.role },
   env.JWT_SECRET,
@@ -35,6 +39,7 @@ export const getMeService = async (userId: string) => {
       id: true,
       email: true,
       role: true,
+      isActive: true,
       createdAt: true,
     },
   })

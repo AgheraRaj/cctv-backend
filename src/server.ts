@@ -14,6 +14,7 @@ import { addAuditLog } from './modules/audit/audit.queue.js'
 
 // ─── Route Imports ─────────────────────────────────────────────────
 import authRoutes from './modules/auth/auth.routes.js'
+import userRoutes from './modules/users/users.routes.js'
 import nvrRoutes from './modules/nvrs/nvrs.routes.js'
 import cameraRoutes from './modules/cameras/cameras.routes.js'
 import streamRoutes from './modules/streams/streams.routes.js'
@@ -71,6 +72,7 @@ app.get('/health', (_req, res) => {
 
 // ─── Routes ────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes)
+app.use('/api/users', userRoutes)
 app.use('/api/nvrs', nvrRoutes)
 app.use('/api/nvrs/:nvrId/cameras', cameraRoutes)
 app.use('/api/nvrs/:nvrId/detection', detectionRoutes)
@@ -149,4 +151,4 @@ process.on('uncaughtException', (err) => {
   process.exit(1)
 })
 
-start()
+start()
